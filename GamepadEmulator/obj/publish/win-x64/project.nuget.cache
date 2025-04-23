@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "dgSpecHash": "G7BJI8aUZAg=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\Vitor\\source\\repos\\GamepadEmulator\\GamepadEmulator\\GamepadEmulator.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Vitor\\.nuget\\packages\\microsoft.net.illink.tasks\\8.0.15\\microsoft.net.illink.tasks.8.0.15.nupkg.sha512",
+    "C:\\Users\\Vitor\\.nuget\\packages\\nefarius.vigem.client\\1.21.256\\nefarius.vigem.client.1.21.256.nupkg.sha512",
+    "C:\\Users\\Vitor\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.15\\microsoft.netcore.app.runtime.win-x64.8.0.15.nupkg.sha512",
+    "C:\\Users\\Vitor\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.15\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.15.nupkg.sha512",
+    "C:\\Users\\Vitor\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.15\\microsoft.aspnetcore.app.runtime.win-x64.8.0.15.nupkg.sha512",
+    "C:\\Users\\Vitor\\.nuget\\packages\\microsoft.netcore.app.crossgen2.win-x64\\8.0.15\\microsoft.netcore.app.crossgen2.win-x64.8.0.15.nupkg.sha512"
+  ],
+  "logs": []
+}

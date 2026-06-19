@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -8,6 +8,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <PackageIcon>ChatGPT Image 19 de abr. de 2025, 03_22_41.png</PackageIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MaterialSkin.2" Version="2.3.1" />
+  </ItemGroup>
 
   <ItemGroup>
     <None Include="..\..\..\..\Downloads\ChatGPT Image 19 de abr. de 2025, 03_22_41.png">

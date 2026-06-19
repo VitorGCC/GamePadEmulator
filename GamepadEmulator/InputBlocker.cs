@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -59,16 +59,12 @@ namespace GamepadEmulator
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         private static extern IntPtr GetModuleHandle(string lpModuleName);
 
-        public static void StartBlocking(HashSet<Keys> keysToBlock, bool blockMouseMovement, bool blockMouseButtons, Keys escapeKey = Keys.F12)
+        public static void InitializeHooks(Keys escapeKey = Keys.F12)
         {
             if (_keyboardHookID == IntPtr.Zero && _mouseHookID == IntPtr.Zero)
             {
-                _keysToBlock = keysToBlock;
-                _blockMouseMovement = blockMouseMovement;
-                _blockMouseButtons = blockMouseButtons;
                 _escapeKey = escapeKey;
-                _blockingEnabled = true;
-
+                
                 _keyboardProc = KeyboardHookCallback;
                 _mouseProc = MouseHookCallback;
 
@@ -79,11 +75,17 @@ namespace GamepadEmulator
                     _mouseHookID = SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, GetModuleHandle(curModule.ModuleName), 0);
                 }
             }
-            else
+        }
+
+        public static void SetBlockingState(bool enable, HashSet<Keys>? keysToBlock = null, bool blockMouseMovement = false, bool blockMouseButtons = false)
+        {
+            if (keysToBlock != null)
             {
-                // Se os hooks já existem, apenas ativar o bloqueio
-                _blockingEnabled = true;
+                _keysToBlock = keysToBlock;
             }
+            _blockMouseMovement = blockMouseMovement;
+            _blockMouseButtons = blockMouseButtons;
+            _blockingEnabled = enable;
         }
 
         public static void StopBlocking()

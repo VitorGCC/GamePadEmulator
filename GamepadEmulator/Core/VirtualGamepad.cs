@@ -1,4 +1,4 @@
-﻿using Nefarius.ViGEm.Client;
+using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
 using System;
@@ -194,6 +194,17 @@ namespace GamepadEmulator
                 }
 
                 directInputActive = true;
+                
+                // Ativar bloqueio de input físico
+                HashSet<Keys> blockedKeys = new HashSet<Keys>
+                {
+                    KeyMap.DPadUpKey, KeyMap.DPadDownKey, KeyMap.DPadLeftKey, KeyMap.DPadRightKey,
+                    KeyMap.LeftStickUpKey, KeyMap.LeftStickDownKey, KeyMap.LeftStickLeftKey, KeyMap.LeftStickRightKey,
+                    KeyMap.ButtonA, KeyMap.ButtonB, KeyMap.ButtonX, KeyMap.ButtonY,
+                    KeyMap.ButtonLB, KeyMap.ButtonRB, KeyMap.ButtonLT, KeyMap.ButtonRT,
+                    KeyMap.ButtonStart, KeyMap.ButtonBack
+                };
+                InputBlocker.SetBlockingState(true, blockedKeys, true, true);
             }
             catch (Exception ex)
             {
@@ -217,6 +228,7 @@ namespace GamepadEmulator
                 }
 
                 directInputActive = false;
+                InputBlocker.SetBlockingState(false);
             }
             catch (Exception ex)
             {

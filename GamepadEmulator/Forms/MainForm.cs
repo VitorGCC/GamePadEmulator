@@ -1,25 +1,40 @@
-﻿using GamepadEmulator;
+using GamepadEmulator;
 
-public partial class MainForm : Form
+using MaterialSkin;
+using MaterialSkin.Controls;
+
+public partial class MainForm : MaterialForm
 {
+    private readonly MaterialSkinManager materialSkinManager;
     private VirtualGamepad? gamepad;
     private bool emulatorRunning = false;
     private bool emulatorActive = true;
     private string currentProfilePath = string.Empty;
 
     // Controles da interface
-    private Button btnStart = new();
-    private Button btnConfig = new();
-    private Label lblStatus = new();
-    private Label lblProfile = new();
-    private ComboBox cboProfiles = new();
-    private Panel pnlInfo = new();
-    private Label lblInfo = new();
+    private MaterialButton btnStart = new();
+    private MaterialButton btnConfig = new();
+    private MaterialLabel lblStatus = new();
+    private MaterialLabel lblProfile = new();
+    private MaterialComboBox cboProfiles = new();
+    private MaterialCard pnlInfo = new();
+    private MaterialLabel lblInfo = new();
     private NotifyIcon trayIcon = new();
 
     public MainForm()
     {
         InitializeComponent();
+
+        // Inicializar o Material Skin Manager
+        materialSkinManager = MaterialSkinManager.Instance;
+        materialSkinManager.AddFormToManage(this);
+        materialSkinManager.Theme = MaterialSkinManager.Themes.DARK;
+        materialSkinManager.ColorScheme = new ColorScheme(
+            Primary.Green600, Primary.Green700,
+            Primary.Green200, Accent.LightBlue200,
+            TextShade.WHITE
+        );
+
         InitializeGamepad();
         LoadProfiles();
 
@@ -273,87 +288,81 @@ public partial class MainForm : Form
         private void InitializeComponent()
         {
             // Configuração do formulário
-            Text = "GameController Emulator";
-            ClientSize = new Size(450, 350);
+            Text = "GamePad Emulator UI";
+            ClientSize = new Size(450, 440);
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
             Icon = SystemIcons.Application;
             StartPosition = FormStartPosition.CenterScreen;
 
             // Painel de informações
-            pnlInfo = new Panel
+            pnlInfo = new MaterialCard
             {
-                Location = new Point(20, 20),
-                Size = new Size(410, 60),
-                BorderStyle = BorderStyle.FixedSingle
+                Location = new Point(20, 80),
+                Size = new Size(410, 80)
             };
 
-            lblInfo = new Label
+            lblInfo = new MaterialLabel
             {
-                Text = "Use seu mouse e teclado como um controle Xbox 360.\n" +
-                      "Configure as teclas e crie perfis personalizados para diferentes jogos.",
-                Location = new Point(10, 10),
+                Text = "Use seu mouse e teclado como um controle Xbox 360.\nConfigure as teclas e crie perfis.",
+                Location = new Point(10, 20),
                 Size = new Size(390, 40),
                 Parent = pnlInfo,
                 TextAlign = ContentAlignment.MiddleCenter
             };
 
             // Status
-            lblStatus = new Label
+            lblStatus = new MaterialLabel
             {
                 Text = "Pronto",
-                Location = new Point(20, 100),
+                Location = new Point(20, 180),
                 Size = new Size(410, 25),
-                TextAlign = ContentAlignment.MiddleCenter,
-                ForeColor = Color.Blue,
-                Font = new Font(Font, FontStyle.Bold)
+                TextAlign = ContentAlignment.MiddleCenter
             };
 
             // Linha de ajuda F12
-            Label lblHelp = new Label
+            MaterialLabel lblHelp = new MaterialLabel
             {
-                Text = "Pressione F12 para ativar/desativar o emulador a qualquer momento",
-                Location = new Point(20, 130),
+                Text = "Pressione F12 para ativar/desativar",
+                Location = new Point(20, 210),
                 Size = new Size(410, 20),
-                TextAlign = ContentAlignment.MiddleCenter,
-                ForeColor = Color.DarkGreen,
-                Font = new Font(Font, FontStyle.Italic)
+                TextAlign = ContentAlignment.MiddleCenter
             };
 
             // Seletor de perfil
-            lblProfile = new Label
+            lblProfile = new MaterialLabel
             {
                 Text = "Perfil:",
-                Location = new Point(20, 170),
-                Size = new Size(50, 20)
+                Location = new Point(20, 245),
+                Size = new Size(60, 20)
             };
 
-            cboProfiles = new ComboBox
+            cboProfiles = new MaterialComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(75, 170),
-                Size = new Size(200, 21)
+                Location = new Point(85, 240),
+                Size = new Size(190, 36)
             };
             cboProfiles.SelectedIndexChanged += CboProfiles_SelectedIndexChanged;
 
             // Botão de iniciar/parar
-            btnStart = new Button
+            btnStart = new MaterialButton
             {
                 Text = "Iniciar Emulador",
-                Location = new Point(75, 210),
+                Location = new Point(75, 300),
                 Size = new Size(300, 40),
-                Font = new Font(Font.FontFamily, 10, FontStyle.Bold),
-                BackColor = Color.LightGreen
+                Type = MaterialButton.MaterialButtonType.Contained,
+                UseAccentColor = false
             };
             btnStart.Click += BtnStart_Click;
 
             // Botão de configuração
-            btnConfig = new Button
+            btnConfig = new MaterialButton
             {
                 Text = "Configurar Controles",
-                Location = new Point(75, 270),
+                Location = new Point(75, 360),
                 Size = new Size(300, 40),
-                Font = new Font(Font.FontFamily, 10)
+                Type = MaterialButton.MaterialButtonType.Outlined
             };
             btnConfig.Click += BtnConfig_Click;
 

@@ -1,11 +1,15 @@
-﻿using System;
+using System;
 using System.Windows.Forms;
 using System.Drawing;
 
+using MaterialSkin;
+using MaterialSkin.Controls;
+
 namespace GamepadEmulator;
 
-public partial class ConfigForm : Form
+public partial class ConfigForm : MaterialForm
 {
+    private readonly MaterialSkinManager materialSkinManager;
     public KeyMapping KeyMap { get; private set; }
     private Button? currentMappingButton = null;
 
@@ -54,6 +58,11 @@ public partial class ConfigForm : Form
     {
         // Inicializar componentes
         InitializeComponent();
+
+        // Inicializar o Material Skin Manager
+        materialSkinManager = MaterialSkinManager.Instance;
+        materialSkinManager.AddFormToManage(this);
+        materialSkinManager.Theme = MaterialSkinManager.Themes.DARK;
 
         // Clonar o mapeamento atual para não modificar o original até confirmar
         KeyMap = CloneKeyMapping(keyMap);

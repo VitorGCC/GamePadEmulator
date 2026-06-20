@@ -79,6 +79,7 @@ namespace GamepadEmulator
 
         // Valores do analógico com alta precisão
         private Vector2 analogStickValue = Vector2.Zero;
+        private Vector2 smoothedMouseDelta = Vector2.Zero;
 
         // Taxa de polling (1000 Hz = 1ms, suficiente para jogos)
         private const int TARGET_POLL_RATE = 1000;
@@ -673,27 +674,66 @@ namespace GamepadEmulator
         }
 
         /// <summary>
-        /// Mapeamento 1:1 direto do mouse para o analógico direito.
-        /// Sem acumulação, sem decay, sem suavização.
-        /// Quando o mouse para de se mover, o stick volta instantaneamente ao centro.
-        /// Resultado: sensação idêntica ao uso nativo do mouse.
+        /// Mapeamento avançado do mouse para o analógico direito.
+        /// Aplica Anti-Deadzone Radial, Curva de Resposta Inversa, e Micro-Smoothing (EMA).
         /// </summary>
         private void ProcessMouseMovement(int deltaX, int deltaY)
         {
             if (controller == null) return;
 
-            // Fator de conversão: pixels de movimento → deflexão do stick
-            // MouseSensitivity é configurável pelo usuário (padrão: 3.0)
-            float sensitivityFactor = KeyMap.MouseSensitivity * 200.0f;
+            // 1. EMA Micro-Smoothing Temporal
+            // Reduz saltos bruscos gerados por diferenças na taxa de atualização (Polling Rate)
+            float smoothingFactor = 0.6f; // 1.0 = Sem suavização, 0.1 = Muito suave
+            Vector2 currentDelta = new Vector2(deltaX, -deltaY); // Inverter Y para movimento natural
+            smoothedMouseDelta = Vector2.Lerp(smoothedMouseDelta, currentDelta, smoothingFactor);
 
-            // Mapeamento direto: delta do mouse → posição do stick
-            // Sem acumulação — cada frame é independente
-            float rawX = deltaX * sensitivityFactor;
-            float rawY = -deltaY * sensitivityFactor; // Inverter Y para movimento natural
+            // Cortar micros movimentos fantasmas
+            if (smoothedMouseDelta.LengthSquared() < 0.01f)
+            {
+                smoothedMouseDelta = Vector2.Zero;
+                controller.SetAxisValue(Xbox360Axis.RightThumbX, 0);
+                controller.SetAxisValue(Xbox360Axis.RightThumbY, 0);
+                return;
+            }
 
-            // Clamp para os limites do analógico
-            short stickX = (short)Math.Clamp(rawX, short.MinValue, short.MaxValue);
-            short stickY = (short)Math.Clamp(rawY, short.MinValue, short.MaxValue);
+            // 2. Parâmetros Base (Hardcoded por enquanto)
+            // Multiplicador base para traduzir Pixels em Força
+            float sensitivityFactor = KeyMap.MouseSensitivity * 50.0f;
+            
+            // Fator Vertical (Jogos geralmente limitam muito a câmera vertical no controle)
+            float yAxisRatio = 1.5f; 
+            
+            // Anti-Deadzone Radial (Min. Deflection) - ~21% da capacidade do analógico (32767)
+            // Garante que qualquer micro-movimento do mouse passe pelo filtro do jogo
+            int antiDeadzone = 7000; 
+            
+            // Curva de Resposta Inversa (Raiz)
+            // Aceleração do jogo é exponencial. Nós aplicamos curva inversa para anular e deixar linear.
+            float powerCurve = 0.6f; 
+
+            // Aplicar multiplicadores iniciais
+            float rawX = smoothedMouseDelta.X * sensitivityFactor;
+            float rawY = smoothedMouseDelta.Y * sensitivityFactor * yAxisRatio;
+
+            // 3. Processamento Radial
+            Vector2 rawVector = new Vector2(rawX, rawY);
+            float length = rawVector.Length();
+            Vector2 direction = Vector2.Normalize(rawVector);
+
+            // 4. Aplicar curva inversa (Length ^ 0.6)
+            // Se movermos pouco, a curva vai esticar a entrada para compensar a rampa do jogo
+            float curvedLength = (float)Math.Pow(length, powerCurve) * 200.0f; // Multiplicador para recuperar a escala
+
+            // 5. Anti-Deadzone Radial
+            // Adicionamos a curva ao valor base do Deadzone
+            float finalLength = antiDeadzone + curvedLength;
+
+            // Converter de volta para componentes X e Y
+            Vector2 finalVector = direction * finalLength;
+
+            // 6. Clamp e Envio
+            short stickX = (short)Math.Clamp(finalVector.X, short.MinValue, short.MaxValue);
+            short stickY = (short)Math.Clamp(finalVector.Y, short.MinValue, short.MaxValue);
 
             controller.SetAxisValue(Xbox360Axis.RightThumbX, stickX);
             controller.SetAxisValue(Xbox360Axis.RightThumbY, stickY);

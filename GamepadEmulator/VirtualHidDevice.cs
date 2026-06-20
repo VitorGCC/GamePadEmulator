@@ -1,4 +1,4 @@
-﻿// Adicione estes using statements
+// Adicione estes using statements
 using System.Diagnostics;
 using HidSharp;
 using HidSharp.Reports;
@@ -61,8 +61,8 @@ public class VirtualHidDevice
 
         // Botões
         byte buttons = 0;
-        if (controller.IsButtonPressed(Xbox360Button.A)) buttons |= 0x01;
-        if (controller.IsButtonPressed(Xbox360Button.B)) buttons |= 0x02;
+        // if (controller.IsButtonPressed(Xbox360Button.A)) buttons |= 0x01;
+        // if (controller.IsButtonPressed(Xbox360Button.B)) buttons |= 0x02;
         // ... outros botões
 
         xboxReport[1] = buttons;
@@ -84,6 +84,9 @@ public class VirtualHidDevice
     public void Dispose()
     {
         // Liberar recursos do dispositivo virtual
-        virtualDevice?.Dispose();
+        if (virtualDevice != null && virtualDevice.IsOpen)
+        {
+            virtualDevice.Close();
+        }
     }
 }

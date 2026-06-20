@@ -282,6 +282,9 @@ public partial class MainForm : MaterialForm
 
             gamepad?.Dispose();
 
+            // Liberar hooks de teclado e mouse
+            InputBlocker.ReleaseHooks();
+
             base.OnFormClosing(e);
         }
 

@@ -1,4 +1,4 @@
-﻿using Nefarius.ViGEm.Client;
+using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
 using System;
@@ -71,10 +71,6 @@ namespace GamepadEmulator
         private SensitivitySettings sensitivity = new SensitivitySettings();
 
         // Rastreamento de movimento de mouse
-        private int lastMouseX = 0;
-        private int lastMouseY = 0;
-        private Vector2 mousePosition;
-        private Vector2 lastMousePosition;
         private Vector2 rawMouseDelta = Vector2.Zero;
 
         // Detecção de mouse levantado
@@ -84,8 +80,8 @@ namespace GamepadEmulator
         // Valores do analógico com alta precisão
         private Vector2 analogStickValue = Vector2.Zero;
 
-        // Taxa de polling
-        private const int TARGET_POLL_RATE = 16000;
+        // Taxa de polling (1000 Hz = 1ms, suficiente para jogos)
+        private const int TARGET_POLL_RATE = 1000;
         private long lastPollTime = 0;
         private long performanceFrequency = 0;
 
@@ -137,6 +133,12 @@ namespace GamepadEmulator
         {
             KeyMap = new KeyMapping();
             InitializeClient();
+
+            // Inicializar contador de alta precisão
+            QueryPerformanceFrequency(out performanceFrequency);
+
+            // Inicializar DirectInput para teclado e mouse
+            InitializeDirectInput();
 
             // Inicializar dispositivo HID virtual
             virtualHid = new VirtualHidDevice();
@@ -194,6 +196,18 @@ namespace GamepadEmulator
                 }
 
                 directInputActive = true;
+                
+                // Ativar bloqueio APENAS de teclas mapeadas do teclado
+                // NÃO bloquear mouse (movimento e botões) — o jogo lê o mouse diretamente
+                HashSet<Keys> blockedKeys = new HashSet<Keys>
+                {
+                    KeyMap.DPadUpKey, KeyMap.DPadDownKey, KeyMap.DPadLeftKey, KeyMap.DPadRightKey,
+                    KeyMap.LeftStickUpKey, KeyMap.LeftStickDownKey, KeyMap.LeftStickLeftKey, KeyMap.LeftStickRightKey,
+                    KeyMap.ButtonA, KeyMap.ButtonB, KeyMap.ButtonX, KeyMap.ButtonY,
+                    KeyMap.ButtonLB, KeyMap.ButtonRB,
+                    KeyMap.ButtonStart, KeyMap.ButtonBack
+                };
+                InputBlocker.SetBlockingState(true, blockedKeys, false, false);
             }
             catch (Exception ex)
             {
@@ -217,6 +231,7 @@ namespace GamepadEmulator
                 }
 
                 directInputActive = false;
+                InputBlocker.SetBlockingState(false);
             }
             catch (Exception ex)
             {
@@ -289,6 +304,9 @@ namespace GamepadEmulator
                 controller = client.CreateXbox360Controller();
                 controller.Connect();
 
+                // Ativar timer de alta precisão
+                timeBeginPeriod(1);
+
                 // Iniciar contagem de tempo de alta precisão
                 QueryPerformanceCounter(out lastPollTime);
 
@@ -307,8 +325,9 @@ namespace GamepadEmulator
 
                 return true;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                Debug.WriteLine($"Erro ao iniciar emulador: {ex.Message}\nStack: {ex.StackTrace}");
                 if (controller != null)
                 {
                     try { controller.Disconnect(); } catch { }
@@ -380,34 +399,30 @@ namespace GamepadEmulator
 
             while (isRunning && controller != null)
             {
-                // Verificar se estamos em um jogo
-                bool gameActive = IsGameWindowActive();
-
                 // Timing de alta precisão
                 QueryPerformanceCounter(out currentPollTime);
                 double elapsedTime = (double)(currentPollTime - lastPollTime) / performanceFrequency;
 
-                // Taxa de atualização alta
+                // Limitar taxa de atualização
                 double targetFrameTime = 1.0 / TARGET_POLL_RATE;
-                if (IsGameWindowActive())
-                {
-                    virtualHid.SendControllerState(controller);
-                }
                 if (elapsedTime < targetFrameTime)
                 {
-                    Thread.Yield();
+                    Thread.Sleep(1);
                     continue;
                 }
 
                 lastPollTime = currentPollTime;
 
+                // Verificar se estamos em um jogo (apenas 1x por ciclo)
+                bool gameActive = IsGameWindowActive();
+
                 if (!isActive)
                 {
-                    Thread.Yield();
+                    Thread.Sleep(1);
                     continue;
                 }
 
-                // Verificar F12 para toggle (sempre via GetAsyncKeyState)
+                // Verificar F12 para toggle
                 if ((GetAsyncKeyState(ToggleKey) & 0x8000) != 0)
                 {
                     long currentTime = Environment.TickCount64;
@@ -421,14 +436,14 @@ namespace GamepadEmulator
 
                 if (!isActive)
                 {
-                    Thread.Yield();
+                    Thread.Sleep(1);
                     continue;
                 }
 
-                // Resetar botões
+                // Resetar botões do controle virtual
                 ResetControllerButtons();
 
-                // Processar entrada via DirectInput quando ativo
+                // Processar entrada via DirectInput quando em jogo
                 if (directInputActive && gameActive)
                 {
                     ProcessDirectInput(ref previousKeyboardState, ref firstKeyboardState,
@@ -436,26 +451,13 @@ namespace GamepadEmulator
                 }
                 else
                 {
-                    // Caso DirectInput não esteja disponível, usar GetAsyncKeyState
                     ProcessStandardInputs();
                 }
 
-                // Anti-flickering para jogos que precisam
-                if (gameActive && !AnyKeyPressed() && analogStickValue.Length() < 0.05f &&
-                    Environment.TickCount64 - lastPositionChangeTime > 200)
-                {
-                    flickerCounter = (flickerCounter + 1) % 400;
+                // Processar botões do mouse como gatilhos (sempre, em qualquer modo)
+                ProcessMouseButtons();
 
-                    // Padrão de movimento circular muito sutil
-                    float angle = flickerCounter * 0.016f;
-                    short flickerX = (short)(Math.Cos(angle) * 2);
-                    short flickerY = (short)(Math.Sin(angle) * 2);
-
-                    controller.SetAxisValue(Xbox360Axis.RightThumbX, flickerX);
-                    controller.SetAxisValue(Xbox360Axis.RightThumbY, flickerY);
-                }
-
-                // Submeter atualizações
+                // Submeter atualizações do controle virtual
                 controller.SubmitReport();
             }
         }
@@ -483,25 +485,15 @@ namespace GamepadEmulator
                     previousKeyboardState = currentState;
                 }
 
-                // Ler estado do mouse via DirectInput
+                // Ler movimento do mouse via DirectInput
                 if (mouse != null)
                 {
                     mouse.Poll();
-                    MouseState currentState = mouse.GetCurrentState();
+                    MouseState currentMouseState = mouse.GetCurrentState();
 
-                    if (firstMouseState)
-                    {
-                        previousMouseState = currentState;
-                        firstMouseState = false;
-                    }
-
-                    // Processar mouse para o controle Xbox (stick direito)
-                    int deltaX = currentState.X - previousMouseState.X;
-                    int deltaY = currentState.Y - previousMouseState.Y;
-
-                    ProcessMouseMovement(deltaX, deltaY);
-
-                    previousMouseState = currentState;
+                    // DirectInput já retorna valores RELATIVOS (delta) por poll.
+                    // NÃO subtrair o estado anterior — usar diretamente.
+                    ProcessMouseMovement(currentMouseState.X, currentMouseState.Y);
                 }
             }
             catch (SharpDX.SharpDXException ex)
@@ -524,6 +516,23 @@ namespace GamepadEmulator
             {
                 // Ignorar outros erros
             }
+        }
+
+        /// <summary>
+        /// Processa botões do mouse e mapeia para gatilhos do controle.
+        /// O MOVIMENTO do mouse NÃO é interceptado — o jogo lê diretamente.
+        /// </summary>
+        private void ProcessMouseButtons()
+        {
+            if (controller == null) return;
+
+            // Botão esquerdo do mouse → RT (atirar)
+            if ((GetAsyncKeyState(Keys.LButton) & 0x8000) != 0)
+                controller.SetSliderValue(Xbox360Slider.RightTrigger, byte.MaxValue);
+
+            // Botão direito do mouse → LT (mirar)
+            if ((GetAsyncKeyState(Keys.RButton) & 0x8000) != 0)
+                controller.SetSliderValue(Xbox360Slider.LeftTrigger, byte.MaxValue);
         }
 
         private void ProcessKeyboardState(KeyboardState state)
@@ -663,48 +672,31 @@ namespace GamepadEmulator
             }
         }
 
+        /// <summary>
+        /// Mapeamento 1:1 direto do mouse para o analógico direito.
+        /// Sem acumulação, sem decay, sem suavização.
+        /// Quando o mouse para de se mover, o stick volta instantaneamente ao centro.
+        /// Resultado: sensação idêntica ao uso nativo do mouse.
+        /// </summary>
         private void ProcessMouseMovement(int deltaX, int deltaY)
         {
-            if (deltaX != 0 || deltaY != 0)
-            {
-                lastPositionChangeTime = Environment.TickCount64;
+            if (controller == null) return;
 
-                // Converter para Vector2 e aplicar sensibilidade
-                Vector2 mouseDelta = new Vector2(deltaX, -deltaY); // Inverter Y para movimento natural
-                mouseDelta *= sensitivity.GlobalMultiplier * 0.001f;
+            // Fator de conversão: pixels de movimento → deflexão do stick
+            // MouseSensitivity é configurável pelo usuário (padrão: 3.0)
+            float sensitivityFactor = KeyMap.MouseSensitivity * 200.0f;
 
-                // Atualizar valor do analógico baseado no delta
-                analogStickValue += mouseDelta;
+            // Mapeamento direto: delta do mouse → posição do stick
+            // Sem acumulação — cada frame é independente
+            float rawX = deltaX * sensitivityFactor;
+            float rawY = -deltaY * sensitivityFactor; // Inverter Y para movimento natural
 
-                // Aplicar decay
-                analogStickValue *= 0.95f;
+            // Clamp para os limites do analógico
+            short stickX = (short)Math.Clamp(rawX, short.MinValue, short.MaxValue);
+            short stickY = (short)Math.Clamp(rawY, short.MinValue, short.MaxValue);
 
-                // Limitar o valor máximo
-                if (analogStickValue.Length() > 1.0f)
-                {
-                    analogStickValue = Vector2.Normalize(analogStickValue);
-                }
-            }
-            else if (Environment.TickCount64 - lastPositionChangeTime > 30)
-            {
-                // Reduzir gradualmente
-                analogStickValue *= 0.9f;
-
-                if (analogStickValue.Length() < 0.001f)
-                {
-                    analogStickValue = Vector2.Zero;
-                }
-            }
-
-            // Converter para valores do controle
-            if (controller != null)
-            {
-                short stickX = (short)(-analogStickValue.X * short.MaxValue);
-                short stickY = (short)(-analogStickValue.Y * short.MaxValue); // Já invertemos acima
-
-                controller.SetAxisValue(Xbox360Axis.RightThumbX, stickX);
-                controller.SetAxisValue(Xbox360Axis.RightThumbY, stickY);
-            }
+            controller.SetAxisValue(Xbox360Axis.RightThumbX, stickX);
+            controller.SetAxisValue(Xbox360Axis.RightThumbY, stickY);
         }
 
         private void ResetControllerButtons()
@@ -852,15 +844,4 @@ namespace GamepadEmulator
             GC.SuppressFinalize(this);
         }
     }
-}
-
-// Classe de eventos movida para fora da classe VirtualGamepad
-public class EmulatorStateChangedEventArgs : EventArgs
-{
-    public bool IsActive { get; }
-
-    public EmulatorStateChangedEventArgs(bool isActive)
-    {
-        IsActive = isActive;
-    }
-}
+}

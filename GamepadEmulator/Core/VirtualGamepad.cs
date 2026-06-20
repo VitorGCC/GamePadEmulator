@@ -34,7 +34,6 @@ namespace GamepadEmulator
         // DirectInput para interceptação de dispositivos
         private DirectInput? directInput;
         private Keyboard? keyboard;
-        private Mouse? mouse;
         private bool directInputActive = false;
 
         private VirtualHidDevice virtualHid;
@@ -73,13 +72,10 @@ namespace GamepadEmulator
         // Rastreamento de movimento de mouse
         private Vector2 rawMouseDelta = Vector2.Zero;
 
-        // Detecção de mouse levantado
-        private long lastPositionChangeTime = 0;
-        private const long MOUSE_LIFT_DETECTION_MS = 50;
-
         // Valores do analógico com alta precisão
         private Vector2 analogStickValue = Vector2.Zero;
         private Vector2 smoothedMouseDelta = Vector2.Zero;
+        private Vector2 mouseOverflowBuffer = Vector2.Zero;
 
         // Taxa de polling (1000 Hz = 1ms, suficiente para jogos)
         private const int TARGET_POLL_RATE = 1000;
@@ -130,10 +126,13 @@ namespace GamepadEmulator
 
         [DllImport("user32.dll")]
         static extern int ShowCursor(bool bShow);
-        public VirtualGamepad()
+        public VirtualGamepad(IntPtr windowHandle)
         {
             KeyMap = new KeyMapping();
             InitializeClient();
+            
+            // Inicializar RawInput na thread principal com o Handle da janela
+            GamepadEmulator.Core.RawInputManager.Initialize(windowHandle);
 
             // Inicializar contador de alta precisão
             QueryPerformanceFrequency(out performanceFrequency);
@@ -158,10 +157,6 @@ namespace GamepadEmulator
                 // Configurar teclado
                 keyboard = new Keyboard(directInput);
                 keyboard.Properties.BufferSize = 128;
-
-                // Configurar mouse
-                mouse = new Mouse(directInput);
-                mouse.Properties.BufferSize = 128;
             }
             catch (Exception ex)
             {
@@ -170,8 +165,6 @@ namespace GamepadEmulator
                 directInput = null;
                 keyboard?.Dispose();
                 keyboard = null;
-                mouse?.Dispose();
-                mouse = null;
             }
         }
 
@@ -186,14 +179,6 @@ namespace GamepadEmulator
                     keyboard.SetCooperativeLevel(Process.GetCurrentProcess().MainWindowHandle,
                         CooperativeLevelFlags.Background | CooperativeLevelFlags.NonExclusive);
                     keyboard.Acquire();
-                }
-
-                if (mouse != null)
-                {
-                    // Modo não-exclusivo
-                    mouse.SetCooperativeLevel(Process.GetCurrentProcess().MainWindowHandle,
-                        CooperativeLevelFlags.Background | CooperativeLevelFlags.NonExclusive);
-                    mouse.Acquire();
                 }
 
                 directInputActive = true;
@@ -224,11 +209,6 @@ namespace GamepadEmulator
                 if (keyboard != null)
                 {
                     keyboard.Unacquire();
-                }
-
-                if (mouse != null)
-                {
-                    mouse.Unacquire();
                 }
 
                 directInputActive = false;
@@ -387,16 +367,9 @@ namespace GamepadEmulator
             // Timer de alta precisão
             long currentPollTime = 0;
 
-            // Anti-flickering
-            int flickerCounter = 0;
-
             // Estado anterior do teclado
-            KeyboardState previousKeyboardState = default;
+            KeyboardState? previousKeyboardState = null;
             bool firstKeyboardState = true;
-
-            // Estado anterior do mouse
-            MouseState previousMouseState = default;
-            bool firstMouseState = true;
 
             while (isRunning && controller != null)
             {
@@ -444,27 +417,22 @@ namespace GamepadEmulator
                 // Resetar botões do controle virtual
                 ResetControllerButtons();
 
-                // Processar entrada via DirectInput quando em jogo
+                // Processar botões e eixos
                 if (directInputActive && gameActive)
                 {
-                    ProcessDirectInput(ref previousKeyboardState, ref firstKeyboardState,
-                                     ref previousMouseState, ref firstMouseState);
+                    ProcessDirectInput(ref previousKeyboardState, ref firstKeyboardState);
                 }
                 else
                 {
                     ProcessStandardInputs();
                 }
 
-                // Processar botões do mouse como gatilhos (sempre, em qualquer modo)
-                ProcessMouseButtons();
-
                 // Submeter atualizações do controle virtual
                 controller.SubmitReport();
             }
         }
 
-        private void ProcessDirectInput(ref KeyboardState previousKeyboardState, ref bool firstKeyboardState,
-                                      ref MouseState previousMouseState, ref bool firstMouseState)
+        private void ProcessDirectInput(ref KeyboardState? previousKeyboardState, ref bool firstKeyboardState)
         {
             try
             {
@@ -485,17 +453,9 @@ namespace GamepadEmulator
 
                     previousKeyboardState = currentState;
                 }
-
-                // Ler movimento do mouse via DirectInput
-                if (mouse != null)
-                {
-                    mouse.Poll();
-                    MouseState currentMouseState = mouse.GetCurrentState();
-
-                    // DirectInput já retorna valores RELATIVOS (delta) por poll.
-                    // NÃO subtrair o estado anterior — usar diretamente.
-                    ProcessMouseMovement(currentMouseState.X, currentMouseState.Y);
-                }
+                // Ler movimento do mouse via Raw Input (Zero-latency)
+                var deltas = GamepadEmulator.Core.RawInputManager.GetAndResetDeltas();
+                ProcessMouseMovement(deltas.deltaX, deltas.deltaY);
             }
             catch (SharpDX.SharpDXException ex)
             {
@@ -505,7 +465,6 @@ namespace GamepadEmulator
                     try
                     {
                         keyboard?.Acquire();
-                        mouse?.Acquire();
                     }
                     catch
                     {
@@ -519,22 +478,7 @@ namespace GamepadEmulator
             }
         }
 
-        /// <summary>
-        /// Processa botões do mouse e mapeia para gatilhos do controle.
-        /// O MOVIMENTO do mouse NÃO é interceptado — o jogo lê diretamente.
-        /// </summary>
-        private void ProcessMouseButtons()
-        {
-            if (controller == null) return;
 
-            // Botão esquerdo do mouse → RT (atirar)
-            if ((GetAsyncKeyState(Keys.LButton) & 0x8000) != 0)
-                controller.SetSliderValue(Xbox360Slider.RightTrigger, byte.MaxValue);
-
-            // Botão direito do mouse → LT (mirar)
-            if ((GetAsyncKeyState(Keys.RButton) & 0x8000) != 0)
-                controller.SetSliderValue(Xbox360Slider.LeftTrigger, byte.MaxValue);
-        }
 
         private void ProcessKeyboardState(KeyboardState state)
         {
@@ -542,72 +486,72 @@ namespace GamepadEmulator
                 return;
 
             // D-pad
-            if (state.IsPressed(MapKeyToKey(KeyMap.DPadUpKey)))
+            if (IsKeyPressed(state, KeyMap.DPadUpKey))
                 controller.SetButtonState(Xbox360Button.Up, true);
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.DPadDownKey)))
+            if (IsKeyPressed(state, KeyMap.DPadDownKey))
                 controller.SetButtonState(Xbox360Button.Down, true);
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.DPadLeftKey)))
+            if (IsKeyPressed(state, KeyMap.DPadLeftKey))
                 controller.SetButtonState(Xbox360Button.Left, true);
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.DPadRightKey)))
+            if (IsKeyPressed(state, KeyMap.DPadRightKey))
                 controller.SetButtonState(Xbox360Button.Right, true);
 
             // Analógico esquerdo
             short leftThumbX = 0;
             short leftThumbY = 0;
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.LeftStickUpKey)))
+            if (IsKeyPressed(state, KeyMap.LeftStickUpKey))
                 leftThumbY = short.MaxValue;
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.LeftStickDownKey)))
+            if (IsKeyPressed(state, KeyMap.LeftStickDownKey))
                 leftThumbY = short.MinValue;
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.LeftStickLeftKey)))
+            if (IsKeyPressed(state, KeyMap.LeftStickLeftKey))
                 leftThumbX = short.MinValue;
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.LeftStickRightKey)))
+            if (IsKeyPressed(state, KeyMap.LeftStickRightKey))
                 leftThumbX = short.MaxValue;
 
             controller.SetAxisValue(Xbox360Axis.LeftThumbX, leftThumbX);
             controller.SetAxisValue(Xbox360Axis.LeftThumbY, leftThumbY);
 
             // Botões de ação
-            if (state.IsPressed(MapKeyToKey(KeyMap.ButtonA)))
+            if (IsKeyPressed(state, KeyMap.ButtonA))
                 controller.SetButtonState(Xbox360Button.A, true);
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.ButtonB)))
+            if (IsKeyPressed(state, KeyMap.ButtonB))
                 controller.SetButtonState(Xbox360Button.B, true);
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.ButtonX)))
+            if (IsKeyPressed(state, KeyMap.ButtonX))
                 controller.SetButtonState(Xbox360Button.X, true);
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.ButtonY)))
+            if (IsKeyPressed(state, KeyMap.ButtonY))
                 controller.SetButtonState(Xbox360Button.Y, true);
 
             // Botões de ombro
-            if (state.IsPressed(MapKeyToKey(KeyMap.ButtonLB)))
+            if (IsKeyPressed(state, KeyMap.ButtonLB))
                 controller.SetButtonState(Xbox360Button.LeftShoulder, true);
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.ButtonRB)))
+            if (IsKeyPressed(state, KeyMap.ButtonRB))
                 controller.SetButtonState(Xbox360Button.RightShoulder, true);
 
             // Botões especiais
-            if (state.IsPressed(MapKeyToKey(KeyMap.ButtonStart)))
+            if (IsKeyPressed(state, KeyMap.ButtonStart))
                 controller.SetButtonState(Xbox360Button.Start, true);
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.ButtonBack)))
+            if (IsKeyPressed(state, KeyMap.ButtonBack))
                 controller.SetButtonState(Xbox360Button.Back, true);
 
             // Gatilhos
             byte rightTrigger = 0;
             byte leftTrigger = 0;
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.ButtonRT)))
+            if (IsKeyPressed(state, KeyMap.ButtonRT))
                 rightTrigger = byte.MaxValue;
 
-            if (state.IsPressed(MapKeyToKey(KeyMap.ButtonLT)))
+            if (IsKeyPressed(state, KeyMap.ButtonLT))
                 leftTrigger = byte.MaxValue;
 
             controller.SetSliderValue(Xbox360Slider.RightTrigger, rightTrigger);
@@ -673,67 +617,98 @@ namespace GamepadEmulator
             }
         }
 
+        private bool IsKeyPressed(KeyboardState state, Keys winKey)
+        {
+            // Tratar botões do mouse separadamente
+            if (winKey == Keys.LButton || winKey == Keys.RButton || winKey == Keys.MButton || 
+                winKey == Keys.XButton1 || winKey == Keys.XButton2)
+            {
+                return (GetAsyncKeyState(winKey) & 0x8000) != 0;
+            }
+
+            Key dKey = MapKeyToKey(winKey);
+            if (dKey == Key.Unknown) return false;
+            return state.IsPressed(dKey);
+        }
+
         /// <summary>
-        /// Mapeamento avançado do mouse para o analógico direito.
-        /// Aplica Anti-Deadzone Radial, Curva de Resposta Inversa, e Micro-Smoothing (EMA).
+        /// Mapeamento avançado do mouse para o analógico direito com DELTA BUFFER.
+        /// Resolve o limite de "Max Turn Speed" de flicks rápidos acumulando excesso de movimento.
         /// </summary>
         private void ProcessMouseMovement(int deltaX, int deltaY)
         {
             if (controller == null) return;
 
             // 1. EMA Micro-Smoothing Temporal
-            // Reduz saltos bruscos gerados por diferenças na taxa de atualização (Polling Rate)
             float smoothingFactor = 0.6f; // 1.0 = Sem suavização, 0.1 = Muito suave
             Vector2 currentDelta = new Vector2(deltaX, -deltaY); // Inverter Y para movimento natural
             smoothedMouseDelta = Vector2.Lerp(smoothedMouseDelta, currentDelta, smoothingFactor);
 
-            // Cortar micros movimentos fantasmas
-            if (smoothedMouseDelta.LengthSquared() < 0.01f)
+            // Cortar micros movimentos fantasmas e zerar o buffer
+            if (smoothedMouseDelta.LengthSquared() < 0.01f && mouseOverflowBuffer.LengthSquared() < 0.01f)
             {
                 smoothedMouseDelta = Vector2.Zero;
+                mouseOverflowBuffer = Vector2.Zero;
                 controller.SetAxisValue(Xbox360Axis.RightThumbX, 0);
                 controller.SetAxisValue(Xbox360Axis.RightThumbY, 0);
                 return;
             }
 
-            // 2. Parâmetros Base (Hardcoded por enquanto)
-            // Multiplicador base para traduzir Pixels em Força
-            float sensitivityFactor = KeyMap.MouseSensitivity * 50.0f;
+            // 2. Parâmetros Base (Ajustados para Sensibilidade In-Game no MÁXIMO)
+            // Baixamos de 50.0f para 15.0f porque o usuário vai maximizar a Vel. no Jogo (ex: 20/20)
+            float sensitivityFactor = KeyMap.MouseSensitivity * 15.0f;
             
-            // Fator Vertical (Jogos geralmente limitam muito a câmera vertical no controle)
             float yAxisRatio = 1.5f; 
-            
-            // Anti-Deadzone Radial (Min. Deflection) - ~21% da capacidade do analógico (32767)
-            // Garante que qualquer micro-movimento do mouse passe pelo filtro do jogo
-            int antiDeadzone = 7000; 
-            
-            // Curva de Resposta Inversa (Raiz)
-            // Aceleração do jogo é exponencial. Nós aplicamos curva inversa para anular e deixar linear.
+            int antiDeadzone = 7000; // ~21% da capacidade
             float powerCurve = 0.6f; 
 
-            // Aplicar multiplicadores iniciais
+            // Aplicar multiplicadores
             float rawX = smoothedMouseDelta.X * sensitivityFactor;
             float rawY = smoothedMouseDelta.Y * sensitivityFactor * yAxisRatio;
+
+            // Adicionar o overflow do frame anterior (se houver um flick em andamento)
+            rawX += mouseOverflowBuffer.X;
+            rawY += mouseOverflowBuffer.Y;
+
+            // Limpar buffer (se sobrar de novo, salvaremos)
+            mouseOverflowBuffer = Vector2.Zero;
 
             // 3. Processamento Radial
             Vector2 rawVector = new Vector2(rawX, rawY);
             float length = rawVector.Length();
-            Vector2 direction = Vector2.Normalize(rawVector);
+            Vector2 direction = length > 0.01f ? Vector2.Normalize(rawVector) : Vector2.Zero;
 
             // 4. Aplicar curva inversa (Length ^ 0.6)
-            // Se movermos pouco, a curva vai esticar a entrada para compensar a rampa do jogo
-            float curvedLength = (float)Math.Pow(length, powerCurve) * 200.0f; // Multiplicador para recuperar a escala
+            float curvedLength = (float)Math.Pow(length, powerCurve) * 200.0f; 
 
             // 5. Anti-Deadzone Radial
-            // Adicionamos a curva ao valor base do Deadzone
-            float finalLength = antiDeadzone + curvedLength;
+            float finalLength = length > 0.1f ? antiDeadzone + curvedLength : 0;
 
-            // Converter de volta para componentes X e Y
             Vector2 finalVector = direction * finalLength;
 
-            // 6. Clamp e Envio
-            short stickX = (short)Math.Clamp(finalVector.X, short.MinValue, short.MaxValue);
-            short stickY = (short)Math.Clamp(finalVector.Y, short.MinValue, short.MaxValue);
+            // 6. DELTA BUFFER (The Flick Fix)
+            short stickX, stickY;
+            float maxDeflection = short.MaxValue;
+
+            if (finalVector.Length() > maxDeflection)
+            {
+                // O movimento exigiu mais que o analógico aguenta (Flick rápido).
+                // Manda a força máxima possível nesse frame...
+                Vector2 maxedOutVector = direction * maxDeflection;
+                stickX = (short)Math.Clamp(maxedOutVector.X, short.MinValue, short.MaxValue);
+                stickY = (short)Math.Clamp(maxedOutVector.Y, short.MinValue, short.MaxValue);
+
+                // ...e guarda o excesso bruto de volta no buffer para enviar nos próximos milissegundos.
+                // A proporção de envio nos diz o quanto "coube" no limite.
+                float sentRatio = maxDeflection / finalVector.Length();
+                mouseOverflowBuffer = rawVector * (1.0f - sentRatio);
+            }
+            else
+            {
+                // Movimento dentro dos limites mecânicos. Envia direto.
+                stickX = (short)Math.Clamp(finalVector.X, short.MinValue, short.MaxValue);
+                stickY = (short)Math.Clamp(finalVector.Y, short.MinValue, short.MaxValue);
+            }
 
             controller.SetAxisValue(Xbox360Axis.RightThumbX, stickX);
             controller.SetAxisValue(Xbox360Axis.RightThumbY, stickY);
@@ -743,6 +718,7 @@ namespace GamepadEmulator
         {
             if (controller == null) return;
 
+            // Resetar botões
             controller.SetButtonState(Xbox360Button.A, false);
             controller.SetButtonState(Xbox360Button.B, false);
             controller.SetButtonState(Xbox360Button.X, false);
@@ -758,6 +734,10 @@ namespace GamepadEmulator
             controller.SetButtonState(Xbox360Button.Down, false);
             controller.SetButtonState(Xbox360Button.Left, false);
             controller.SetButtonState(Xbox360Button.Right, false);
+
+            // Resetar gatilhos (Triggers)
+            controller.SetSliderValue(Xbox360Slider.LeftTrigger, 0);
+            controller.SetSliderValue(Xbox360Slider.RightTrigger, 0);
         }
 
         private void ProcessStandardInputs()
@@ -866,8 +846,6 @@ namespace GamepadEmulator
             virtualHid?.Dispose();
 
             // Limpar recursos do DirectInput
-            mouse?.Dispose();
-            mouse = null;
 
             keyboard?.Dispose();
             keyboard = null;
@@ -884,4 +862,4 @@ namespace GamepadEmulator
             GC.SuppressFinalize(this);
         }
     }
-}
+}

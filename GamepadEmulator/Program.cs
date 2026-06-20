@@ -15,6 +15,26 @@ internal static class Program
         // Initialize input blocker hooks on the main thread
         InputBlocker.InitializeHooks();
         
-        Application.Run(new MainForm());
+        // Configurar logs para exceções não tratadas
+        Application.ThreadException += (sender, args) =>
+        {
+            Core.Logger.Error("Exceção não tratada na UI Thread", args.Exception);
+            MessageBox.Show("Ocorreu um erro inesperado. Verifique o arquivo logs.txt.", "Erro Fatal", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        };
+
+        AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
+        {
+            Core.Logger.Error("Exceção fatal (AppDomain)", args.ExceptionObject as Exception);
+        };
+
+        try
+        {
+            Application.Run(new MainForm());
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.Error("Falha ao rodar a aplicação principal", ex);
+            throw;
+        }
     }
 }

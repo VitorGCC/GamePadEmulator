@@ -40,7 +40,7 @@ public partial class MainForm : MaterialForm
 
         // Configurar ícone da bandeja
         trayIcon.Icon = SystemIcons.Application;
-        trayIcon.Text = "GameController Emulator - Ativo (v4 Kernel Ready)";
+        trayIcon.Text = "GameController Emulator - Ativo (v5 Ballistic Engine)";
         trayIcon.Visible = true;
         trayIcon.BalloonTipTitle = "GameController Emulator";
 
@@ -66,7 +66,7 @@ public partial class MainForm : MaterialForm
                 lblStatus.Text = "Emulador ATIVO";
                 lblStatus.ForeColor = Color.Green;
                 trayIcon.Icon = SystemIcons.Application;
-                trayIcon.Text = "GameController Emulator - Ativo (v4 Kernel Ready)";
+                trayIcon.Text = "GameController Emulator - Ativo (v5 Ballistic Engine)";
                 ShowNotification("Emulador Ativado", "Teclado e mouse estão funcionando como controle");
             }
             else

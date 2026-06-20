@@ -69,13 +69,8 @@ namespace GamepadEmulator
 
         private SensitivitySettings sensitivity = new SensitivitySettings();
 
-        // Rastreamento de movimento de mouse
-        private Vector2 rawMouseDelta = Vector2.Zero;
-
-        // Valores do analógico com alta precisão
-        private Vector2 analogStickValue = Vector2.Zero;
-        private Vector2 smoothedMouseDelta = Vector2.Zero;
-        private Vector2 mouseOverflowBuffer = Vector2.Zero;
+        // Engine de Tradução Avançada
+        private MouseTranslationEngine mouseEngine = new MouseTranslationEngine();
 
         // Taxa de polling (1000 Hz = 1ms, suficiente para jogos)
         private const int TARGET_POLL_RATE = 1000;
@@ -632,84 +627,18 @@ namespace GamepadEmulator
         }
 
         /// <summary>
-        /// Mapeamento avançado do mouse para o analógico direito com DELTA BUFFER.
-        /// Resolve o limite de "Max Turn Speed" de flicks rápidos acumulando excesso de movimento.
+        /// Mapeamento avançado do mouse para o analógico direito usando MouseTranslationEngine.
         /// </summary>
         private void ProcessMouseMovement(int deltaX, int deltaY)
         {
             if (controller == null) return;
-
-            // 1. EMA Micro-Smoothing Temporal
-            float smoothingFactor = 0.6f; // 1.0 = Sem suavização, 0.1 = Muito suave
-            Vector2 currentDelta = new Vector2(deltaX, -deltaY); // Inverter Y para movimento natural
-            smoothedMouseDelta = Vector2.Lerp(smoothedMouseDelta, currentDelta, smoothingFactor);
-
-            // Cortar micros movimentos fantasmas e zerar o buffer
-            if (smoothedMouseDelta.LengthSquared() < 0.01f && mouseOverflowBuffer.LengthSquared() < 0.01f)
-            {
-                smoothedMouseDelta = Vector2.Zero;
-                mouseOverflowBuffer = Vector2.Zero;
-                controller.SetAxisValue(Xbox360Axis.RightThumbX, 0);
-                controller.SetAxisValue(Xbox360Axis.RightThumbY, 0);
-                return;
-            }
-
-            // 2. Parâmetros Base (Ajustados para Sensibilidade In-Game no MÁXIMO)
-            // Baixamos de 50.0f para 15.0f porque o usuário vai maximizar a Vel. no Jogo (ex: 20/20)
-            float sensitivityFactor = KeyMap.MouseSensitivity * 15.0f;
             
-            float yAxisRatio = 1.5f; 
-            int antiDeadzone = 7000; // ~21% da capacidade
-            float powerCurve = 0.6f; 
+            mouseEngine.Sensitivity = KeyMap.MouseSensitivity;
 
-            // Aplicar multiplicadores
-            float rawX = smoothedMouseDelta.X * sensitivityFactor;
-            float rawY = smoothedMouseDelta.Y * sensitivityFactor * yAxisRatio;
+            // Passa os deltas da USB crua para a Engine de Tradução
+            var (stickX, stickY) = mouseEngine.Translate(deltaX, deltaY);
 
-            // Adicionar o overflow do frame anterior (se houver um flick em andamento)
-            rawX += mouseOverflowBuffer.X;
-            rawY += mouseOverflowBuffer.Y;
-
-            // Limpar buffer (se sobrar de novo, salvaremos)
-            mouseOverflowBuffer = Vector2.Zero;
-
-            // 3. Processamento Radial
-            Vector2 rawVector = new Vector2(rawX, rawY);
-            float length = rawVector.Length();
-            Vector2 direction = length > 0.01f ? Vector2.Normalize(rawVector) : Vector2.Zero;
-
-            // 4. Aplicar curva inversa (Length ^ 0.6)
-            float curvedLength = (float)Math.Pow(length, powerCurve) * 200.0f; 
-
-            // 5. Anti-Deadzone Radial
-            float finalLength = length > 0.1f ? antiDeadzone + curvedLength : 0;
-
-            Vector2 finalVector = direction * finalLength;
-
-            // 6. DELTA BUFFER (The Flick Fix)
-            short stickX, stickY;
-            float maxDeflection = short.MaxValue;
-
-            if (finalVector.Length() > maxDeflection)
-            {
-                // O movimento exigiu mais que o analógico aguenta (Flick rápido).
-                // Manda a força máxima possível nesse frame...
-                Vector2 maxedOutVector = direction * maxDeflection;
-                stickX = (short)Math.Clamp(maxedOutVector.X, short.MinValue, short.MaxValue);
-                stickY = (short)Math.Clamp(maxedOutVector.Y, short.MinValue, short.MaxValue);
-
-                // ...e guarda o excesso bruto de volta no buffer para enviar nos próximos milissegundos.
-                // A proporção de envio nos diz o quanto "coube" no limite.
-                float sentRatio = maxDeflection / finalVector.Length();
-                mouseOverflowBuffer = rawVector * (1.0f - sentRatio);
-            }
-            else
-            {
-                // Movimento dentro dos limites mecânicos. Envia direto.
-                stickX = (short)Math.Clamp(finalVector.X, short.MinValue, short.MaxValue);
-                stickY = (short)Math.Clamp(finalVector.Y, short.MinValue, short.MaxValue);
-            }
-
+            // Envia para o controle virtual
             controller.SetAxisValue(Xbox360Axis.RightThumbX, stickX);
             controller.SetAxisValue(Xbox360Axis.RightThumbY, stickY);
         }

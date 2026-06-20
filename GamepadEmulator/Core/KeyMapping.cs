@@ -1,4 +1,4 @@
-﻿using System.Xml.Serialization;
+using System.Xml.Serialization;
 
 namespace GamepadEmulator;
 
@@ -56,8 +56,10 @@ public class KeyMapping
             serializer.Serialize(stream, this);
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            Core.Logger.Error($"Falha ao salvar o perfil em '{fileName}'", ex);
+            MessageBox.Show($"Erro ao salvar perfil: {ex.Message}", "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }
     }
@@ -78,8 +80,9 @@ public class KeyMapping
             }
             return new KeyMapping();
         }
-        catch
+        catch (Exception ex)
         {
+            Core.Logger.Error($"Falha ao carregar o perfil de '{fileName}'. Usando perfil padrão.", ex);
             return new KeyMapping();
         }
     }

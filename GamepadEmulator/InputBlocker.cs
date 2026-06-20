@@ -41,8 +41,11 @@ namespace GamepadEmulator
             set { _escapeKey = value; }
         }
 
+                private static Core.InterceptionBlocker? _interceptionBlocker;
+        private static bool _useInterception = false;
+
         public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
-        public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+                public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
 
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
@@ -61,18 +64,24 @@ namespace GamepadEmulator
 
         public static void InitializeHooks(Keys escapeKey = Keys.F12)
         {
-            if (_keyboardHookID == IntPtr.Zero && _mouseHookID == IntPtr.Zero)
+            _escapeKey = escapeKey;
+            
+            _interceptionBlocker = new Core.InterceptionBlocker();
+            _useInterception = _interceptionBlocker.Initialize();
+            
+            if (!_useInterception)
             {
-                _escapeKey = escapeKey;
-                
-                _keyboardProc = KeyboardHookCallback;
-                _mouseProc = MouseHookCallback;
-
-                using (Process curProcess = Process.GetCurrentProcess())
-                using (ProcessModule curModule = curProcess.MainModule!)
+                if (_keyboardHookID == IntPtr.Zero && _mouseHookID == IntPtr.Zero)
                 {
-                    _keyboardHookID = SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardProc, GetModuleHandle(curModule.ModuleName), 0);
-                    _mouseHookID = SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, GetModuleHandle(curModule.ModuleName), 0);
+                    _keyboardProc = KeyboardHookCallback;
+                    _mouseProc = MouseHookCallback;
+
+                    using (Process curProcess = Process.GetCurrentProcess())
+                    using (ProcessModule curModule = curProcess.MainModule!)
+                    {
+                        _keyboardHookID = SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardProc, GetModuleHandle(curModule.ModuleName), 0);
+                        _mouseHookID = SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, GetModuleHandle(curModule.ModuleName), 0);
+                    }
                 }
             }
         }
@@ -80,22 +89,32 @@ namespace GamepadEmulator
         public static void SetBlockingState(bool enable, HashSet<Keys>? keysToBlock = null, bool blockMouseMovement = false, bool blockMouseButtons = false)
         {
             if (keysToBlock != null)
-            {
                 _keysToBlock = keysToBlock;
-            }
             _blockMouseMovement = blockMouseMovement;
             _blockMouseButtons = blockMouseButtons;
             _blockingEnabled = enable;
+            
+            if (_useInterception && _interceptionBlocker != null)
+            {
+                if (enable)
+                    _interceptionBlocker.Start(_keysToBlock);
+                else
+                    _interceptionBlocker.Stop();
+            }
         }
 
         public static void StopBlocking()
         {
             _blockingEnabled = false;
+            if (_useInterception && _interceptionBlocker != null)
+                _interceptionBlocker.Stop();
         }
 
         public static void ReleaseHooks()
         {
             _blockingEnabled = false;
+            if (_useInterception && _interceptionBlocker != null)
+                _interceptionBlocker.Stop();
 
             if (_keyboardHookID != IntPtr.Zero)
             {

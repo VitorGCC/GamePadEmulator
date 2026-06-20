@@ -158,7 +158,7 @@ public partial class ConfigForm : MaterialForm
         lblMouseSensitivity.Text = $"Sensibilidade Mouse: {KeyMap.MouseSensitivity:F1}"; // Nova label
     }
 
-    private void BtnMapKey_Click(object sender, EventArgs e)
+    private void BtnMapKey_Click(object? sender, EventArgs e)
     {
         // Cancelar mapeamento anterior se existir
         if (currentMappingButton != null)
@@ -166,8 +166,10 @@ public partial class ConfigForm : MaterialForm
             currentMappingButton.BackColor = SystemColors.Control;
         }
 
-        // Iniciar novo mapeamento
-        currentMappingButton = (Button)sender;
+        Button? btn = sender as Button;
+        if (btn == null) return;
+
+        currentMappingButton = btn;
         currentMappingButton.BackColor = Color.Yellow;
         currentMappingButton.Text = "Pressione uma tecla...";
 
@@ -256,25 +258,25 @@ public partial class ConfigForm : MaterialForm
         UpdateButtonLabels();
     }
 
-    private void TrkSensitivity_ValueChanged(object sender, EventArgs e)
+    private void TrkSensitivity_ValueChanged(object? sender, EventArgs e)
     {
         KeyMap.Sensitivity = trkSensitivity.Value / 10.0f;
         lblSensitivity.Text = $"Sensibilidade Analógico: {KeyMap.Sensitivity:F1}";
     }
 
-    private void TrkDeadZone_ValueChanged(object sender, EventArgs e)
+    private void TrkDeadZone_ValueChanged(object? sender, EventArgs e)
     {
         KeyMap.DeadZone = trkDeadZone.Value / 100.0f;
         lblDeadZone.Text = $"Zona Morta: {KeyMap.DeadZone:P0}";
     }
 
-    private void TrkMouseSensitivity_ValueChanged(object sender, EventArgs e)
+    private void TrkMouseSensitivity_ValueChanged(object? sender, EventArgs e)
     {
         KeyMap.MouseSensitivity = trkMouseSensitivity.Value / 10.0f;
         lblMouseSensitivity.Text = $"Sensibilidade Mouse: {KeyMap.MouseSensitivity:F1}";
     }
 
-    private void BtnSave_Click(object sender, EventArgs e)
+    private void BtnSave_Click(object? sender, EventArgs e)
     {
         // Salvar nome do perfil
         KeyMap.ProfileName = txtProfileName.Text.Trim();
@@ -288,7 +290,7 @@ public partial class ConfigForm : MaterialForm
         Close();
     }
 
-    private void BtnCancel_Click(object sender, EventArgs e)
+    private void BtnCancel_Click(object? sender, EventArgs e)
     {
         DialogResult = DialogResult.Cancel;
         Close();

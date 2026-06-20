@@ -40,7 +40,7 @@ public partial class MainForm : MaterialForm
 
         // Configurar ícone da bandeja
         trayIcon.Icon = SystemIcons.Application;
-        trayIcon.Text = "GameController Emulator - Ativo";
+        trayIcon.Text = "GameController Emulator - Ativo (v4 Kernel Ready)";
         trayIcon.Visible = true;
         trayIcon.BalloonTipTitle = "GameController Emulator";
 
@@ -54,7 +54,7 @@ public partial class MainForm : MaterialForm
     } // O construtor MainForm() termina aqui
 
     // O método Gamepad_StateChanged deve ficar FORA do construtor
-    private void Gamepad_StateChanged(object sender, VirtualGamepad.EmulatorStateChangedEventArgs e)
+    private void Gamepad_StateChanged(object? sender, VirtualGamepad.EmulatorStateChangedEventArgs e)
     {
         // Atualizar estado em thread-safe
         this.BeginInvoke(new Action(() => {
@@ -66,7 +66,7 @@ public partial class MainForm : MaterialForm
                 lblStatus.Text = "Emulador ATIVO";
                 lblStatus.ForeColor = Color.Green;
                 trayIcon.Icon = SystemIcons.Application;
-                trayIcon.Text = "GameController Emulator - Ativo";
+                trayIcon.Text = "GameController Emulator - Ativo (v4 Kernel Ready)";
                 ShowNotification("Emulador Ativado", "Teclado e mouse estão funcionando como controle");
             }
             else
@@ -83,7 +83,7 @@ public partial class MainForm : MaterialForm
         {
             try
             {
-                gamepad = new VirtualGamepad();
+                gamepad = new VirtualGamepad(this.Handle);
 
                 // Adicionar handler para evento de mudança de estado
                 gamepad.StateChanged += Gamepad_StateChanged;
@@ -147,7 +147,7 @@ public partial class MainForm : MaterialForm
             }
         }
 
-        private void BtnStart_Click(object sender, EventArgs e)
+        private void BtnStart_Click(object? sender, EventArgs e)
         {
             if (emulatorRunning)
             {
@@ -244,7 +244,7 @@ public partial class MainForm : MaterialForm
                     // Selecionar o perfil na lista
                     for (int i = 0; i < cboProfiles.Items.Count; i++)
                     {
-                        if (cboProfiles.Items[i].ToString() == gamepad.KeyMap.ProfileName)
+                        if (cboProfiles.Items[i]?.ToString() == gamepad.KeyMap.ProfileName)
                         {
                             cboProfiles.SelectedIndex = i;
                             break;
@@ -254,12 +254,12 @@ public partial class MainForm : MaterialForm
             }
         }
 
-        private void CboProfiles_SelectedIndexChanged(object sender, EventArgs e)
+        private void CboProfiles_SelectedIndexChanged(object? sender, EventArgs e)
         {
             if (cboProfiles.SelectedIndex < 0 || gamepad == null)
                 return;
 
-            string profileName = cboProfiles.SelectedItem.ToString() ?? "Default";
+            string profileName = cboProfiles.SelectedItem?.ToString() ?? "Default";
             string profilePath = Path.Combine(AppContext.BaseDirectory, "Profiles", $"{profileName}.profile");
 
             if (File.Exists(profilePath))

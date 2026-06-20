@@ -12,7 +12,9 @@ using Nefarius.ViGEm.Client.Targets;
 // Classe para gerenciar o dispositivo HID virtual
 public class VirtualHidDevice
 {
-    private UsbDevice virtualDevice;
+#pragma warning disable CS0649
+    private UsbDevice? virtualDevice;
+#pragma warning restore CS0649
     private bool isInitialized = false;
 
     // Buffer para relatório de controle Xbox

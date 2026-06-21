@@ -1,6 +1,8 @@
 using System;
+using System.IO;
 using System.Windows.Forms;
 using System.Drawing;
+using System.Xml.Serialization;
 
 using MaterialSkin;
 using MaterialSkin.Controls;
@@ -12,6 +14,8 @@ public partial class ConfigForm : MaterialForm
     private readonly MaterialSkinManager materialSkinManager;
     public KeyMapping KeyMap { get; private set; }
     private Button? currentMappingButton = null;
+    // Evita que a inicialização programática dos sliders sobrescreva valores carregados
+    private bool _initializing = false;
 
     // Controles da interface
     private TextBox txtProfileName = new();
@@ -50,6 +54,25 @@ public partial class ConfigForm : MaterialForm
     private Button btnMapStart = new();
     private Button btnMapBack = new();
 
+    // AimColor
+    private CheckBox chkAimColorEnabled = new();
+    private TextBox txtAimColorHex = new();
+    private TrackBar trkAimColorFov = new();
+    private TrackBar trkAimColorTolerance = new();
+    private TrackBar trkAimColorStrength = new();
+    private TrackBar trkAimColorCaptureHz = new();
+    private ComboBox cboAimColorMode = new();
+    private Label lblAimFov = new();
+    private Label lblAimTol = new();
+    private Label lblAimStr = new();
+    private Label lblAimHz = new();
+    private Panel pnlColorPreview = new();
+
+    // Recoil
+    private CheckBox chkRecoilEnabled = new();
+    private TrackBar trkRecoilStrength = new();
+    private Label lblRecoilStr = new();
+
     // Botões de ação
     private Button btnSave = new();
     private Button btnCancel = new();
@@ -67,57 +90,46 @@ public partial class ConfigForm : MaterialForm
         // Clonar o mapeamento atual para não modificar o original até confirmar
         KeyMap = CloneKeyMapping(keyMap);
 
-        // Preencher os campos com valores atuais
+        // Preencher os campos com valores atuais (sem disparar write-back dos handlers)
+        _initializing = true;
         txtProfileName.Text = KeyMap.ProfileName;
-        trkSensitivity.Value = (int)(KeyMap.Sensitivity * 10);
-        trkDeadZone.Value = (int)(KeyMap.DeadZone * 100);
-        trkMouseSensitivity.Value = (int)(KeyMap.MouseSensitivity * 10); // Novo controle
+        trkSensitivity.Value = ClampToTrack(trkSensitivity, (int)(KeyMap.Sensitivity * 10));
+        trkDeadZone.Value = ClampToTrack(trkDeadZone, (int)(KeyMap.DeadZone * 100));
+        trkMouseSensitivity.Value = ClampToTrack(trkMouseSensitivity, (int)(KeyMap.SensitivityX * 10));
+
+        // AimColor
+        chkAimColorEnabled.Checked = KeyMap.AimColorEnabled;
+        txtAimColorHex.Text = KeyMap.AimColorHex;
+        trkAimColorFov.Value = ClampToTrack(trkAimColorFov, KeyMap.AimColorFov);
+        trkAimColorTolerance.Value = ClampToTrack(trkAimColorTolerance, KeyMap.AimColorTolerance);
+        trkAimColorStrength.Value = ClampToTrack(trkAimColorStrength, KeyMap.AimColorStrength);
+        trkAimColorCaptureHz.Value = ClampToTrack(trkAimColorCaptureHz, KeyMap.AimColorCaptureHz);
+        UpdateColorPreview();
+        SelectAimColorMode(KeyMap.AimColorActivationMode);
+
+        // Recoil
+        chkRecoilEnabled.Checked = KeyMap.RecoilEnabled;
+        trkRecoilStrength.Value = ClampToTrack(trkRecoilStrength, KeyMap.RecoilStrength);
+
+        SetAimColorControlsEnabled(KeyMap.AimColorEnabled);
+        _initializing = false;
 
         UpdateButtonLabels();
     }
 
+    // Garante que um valor caiba no intervalo do TrackBar (evita ArgumentException)
+    private static int ClampToTrack(TrackBar track, int value)
+        => Math.Clamp(value, track.Minimum, track.Maximum);
+
+    // Clone profundo via serialização — copia TODOS os campos automaticamente,
+    // inclusive parâmetros da engine adicionados no futuro.
     private KeyMapping CloneKeyMapping(KeyMapping source)
     {
-        // Criar um novo mapeamento com os mesmos valores
-        KeyMapping clone = new KeyMapping
-        {
-            ProfileName = source.ProfileName,
-
-            // D-pad (separado)
-            DPadUpKey = source.DPadUpKey,
-            DPadDownKey = source.DPadDownKey,
-            DPadLeftKey = source.DPadLeftKey,
-            DPadRightKey = source.DPadRightKey,
-
-            // Analógico esquerdo (separado)
-            LeftStickUpKey = source.LeftStickUpKey,
-            LeftStickDownKey = source.LeftStickDownKey,
-            LeftStickLeftKey = source.LeftStickLeftKey,
-            LeftStickRightKey = source.LeftStickRightKey,
-
-            // Botões de face
-            ButtonA = source.ButtonA,
-            ButtonB = source.ButtonB,
-            ButtonX = source.ButtonX,
-            ButtonY = source.ButtonY,
-
-            // Botões de ombro
-            ButtonLB = source.ButtonLB,
-            ButtonRB = source.ButtonRB,
-            ButtonLT = source.ButtonLT,
-            ButtonRT = source.ButtonRT,
-
-            // Botões especiais
-            ButtonStart = source.ButtonStart,
-            ButtonBack = source.ButtonBack,
-
-            // Configurações
-            Sensitivity = source.Sensitivity,
-            DeadZone = source.DeadZone,
-            MouseSensitivity = source.MouseSensitivity  // Nova propriedade
-        };
-
-        return clone;
+        var serializer = new XmlSerializer(typeof(KeyMapping));
+        using var ms = new MemoryStream();
+        serializer.Serialize(ms, source);
+        ms.Position = 0;
+        return (KeyMapping)serializer.Deserialize(ms)!;
     }
 
     private void UpdateButtonLabels()
@@ -155,7 +167,7 @@ public partial class ConfigForm : MaterialForm
         // Sensibilidade e zona morta
         lblSensitivity.Text = $"Sensibilidade Analógico: {KeyMap.Sensitivity:F1}";
         lblDeadZone.Text = $"Zona Morta: {KeyMap.DeadZone:P0}";
-        lblMouseSensitivity.Text = $"Sensibilidade Mouse: {KeyMap.MouseSensitivity:F1}"; // Nova label
+        lblMouseSensitivity.Text = $"Sensibilidade Mouse: {KeyMap.SensitivityX:F1}";
     }
 
     private void BtnMapKey_Click(object? sender, EventArgs e)
@@ -260,20 +272,124 @@ public partial class ConfigForm : MaterialForm
 
     private void TrkSensitivity_ValueChanged(object? sender, EventArgs e)
     {
+        if (_initializing) return;
         KeyMap.Sensitivity = trkSensitivity.Value / 10.0f;
         lblSensitivity.Text = $"Sensibilidade Analógico: {KeyMap.Sensitivity:F1}";
     }
 
     private void TrkDeadZone_ValueChanged(object? sender, EventArgs e)
     {
+        if (_initializing) return;
         KeyMap.DeadZone = trkDeadZone.Value / 100.0f;
         lblDeadZone.Text = $"Zona Morta: {KeyMap.DeadZone:P0}";
     }
 
     private void TrkMouseSensitivity_ValueChanged(object? sender, EventArgs e)
     {
-        KeyMap.MouseSensitivity = trkMouseSensitivity.Value / 10.0f;
-        lblMouseSensitivity.Text = $"Sensibilidade Mouse: {KeyMap.MouseSensitivity:F1}";
+        if (_initializing) return;
+        float value = trkMouseSensitivity.Value / 10.0f;
+        KeyMap.SensitivityX = value;
+        KeyMap.SensitivityY = value;
+        KeyMap.MouseSensitivity = value;
+        lblMouseSensitivity.Text = $"Sensibilidade Mouse: {value:F1}";
+    }
+
+    // ── AimColor Event Handlers ──────────────────────────────────────
+
+    private void ChkAimColorEnabled_CheckedChanged(object? sender, EventArgs e)
+    {
+        if (_initializing) return;
+        KeyMap.AimColorEnabled = chkAimColorEnabled.Checked;
+        SetAimColorControlsEnabled(chkAimColorEnabled.Checked);
+    }
+
+    private void SetAimColorControlsEnabled(bool enabled)
+    {
+        txtAimColorHex.Enabled = enabled;
+        trkAimColorFov.Enabled = enabled;
+        trkAimColorTolerance.Enabled = enabled;
+        trkAimColorStrength.Enabled = enabled;
+        trkAimColorCaptureHz.Enabled = enabled;
+        cboAimColorMode.Enabled = enabled;
+    }
+
+    private void TxtAimColorHex_TextChanged(object? sender, EventArgs e)
+    {
+        if (_initializing) return;
+        KeyMap.AimColorHex = txtAimColorHex.Text.Trim();
+        UpdateColorPreview();
+    }
+
+    private void UpdateColorPreview()
+    {
+        try
+        {
+            string hex = (KeyMap.AimColorHex ?? "#ff00d0").Trim().TrimStart('#');
+            if (hex.Length == 6)
+                pnlColorPreview.BackColor = ColorTranslator.FromHtml("#" + hex);
+        }
+        catch { pnlColorPreview.BackColor = Color.Magenta; }
+    }
+
+    private void SelectAimColorMode(string mode)
+    {
+        string m = (mode ?? "fire").ToLowerInvariant();
+        for (int i = 0; i < cboAimColorMode.Items.Count; i++)
+        {
+            if (cboAimColorMode.Items[i]?.ToString()?.ToLowerInvariant() == m)
+            { cboAimColorMode.SelectedIndex = i; return; }
+        }
+        cboAimColorMode.SelectedIndex = 0;
+    }
+
+    private void TrkAimColorFov_ValueChanged(object? sender, EventArgs e)
+    {
+        if (_initializing) return;
+        KeyMap.AimColorFov = trkAimColorFov.Value;
+        lblAimFov.Text = $"FOV: {trkAimColorFov.Value}px";
+    }
+
+    private void TrkAimColorTolerance_ValueChanged(object? sender, EventArgs e)
+    {
+        if (_initializing) return;
+        KeyMap.AimColorTolerance = trkAimColorTolerance.Value;
+        lblAimTol.Text = $"Tolerância: {trkAimColorTolerance.Value}";
+    }
+
+    private void TrkAimColorStrength_ValueChanged(object? sender, EventArgs e)
+    {
+        if (_initializing) return;
+        KeyMap.AimColorStrength = trkAimColorStrength.Value;
+        lblAimStr.Text = $"Força: {trkAimColorStrength.Value}%";
+    }
+
+    private void TrkAimColorCaptureHz_ValueChanged(object? sender, EventArgs e)
+    {
+        if (_initializing) return;
+        KeyMap.AimColorCaptureHz = trkAimColorCaptureHz.Value;
+        lblAimHz.Text = $"Captura: {trkAimColorCaptureHz.Value}Hz";
+    }
+
+    private void CboAimColorMode_SelectedIndexChanged(object? sender, EventArgs e)
+    {
+        if (_initializing) return;
+        KeyMap.AimColorActivationMode = cboAimColorMode.SelectedItem?.ToString()?.ToLowerInvariant() ?? "fire";
+    }
+
+    // ── Recoil Event Handlers ────────────────────────────────────────
+
+    private void ChkRecoilEnabled_CheckedChanged(object? sender, EventArgs e)
+    {
+        if (_initializing) return;
+        KeyMap.RecoilEnabled = chkRecoilEnabled.Checked;
+        trkRecoilStrength.Enabled = chkRecoilEnabled.Checked;
+    }
+
+    private void TrkRecoilStrength_ValueChanged(object? sender, EventArgs e)
+    {
+        if (_initializing) return;
+        KeyMap.RecoilStrength = trkRecoilStrength.Value;
+        lblRecoilStr.Text = $"Força Recoil: {trkRecoilStrength.Value}";
     }
 
     private void BtnSave_Click(object? sender, EventArgs e)
@@ -299,8 +415,8 @@ public partial class ConfigForm : MaterialForm
     private void InitializeComponent()
     {
         // Configuração da janela
-        Text = "Configurar Controles";
-        ClientSize = new Size(650, 650); // Aumentado para acomodar novos controles
+        Text = "EmuShot — Configurar Controles";
+        ClientSize = new Size(650, 920);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -580,11 +696,184 @@ public partial class ConfigForm : MaterialForm
         };
         btnMapBack.Click += BtnMapKey_Click;
 
-        // Botões de ação
+        // ── Grupo AimColor ──────────────────────────────────────────
+        GroupBox grpAimColor = new GroupBox
+        {
+            Text = "🎨 Assistência de Mira por Cor",
+            Location = new Point(20, 580),
+            Size = new Size(610, 180),
+            ForeColor = Color.MediumOrchid
+        };
+
+        chkAimColorEnabled = new CheckBox
+        {
+            Text = "Ativar AimColor",
+            Location = new Point(15, 22),
+            Size = new Size(140, 20),
+            Parent = grpAimColor,
+            ForeColor = Color.White
+        };
+        chkAimColorEnabled.CheckedChanged += ChkAimColorEnabled_CheckedChanged;
+
+        // Cor alvo + preview
+        Label lblAimColor = new Label
+        {
+            Text = "Cor:",
+            Location = new Point(170, 23),
+            Size = new Size(30, 18),
+            Parent = grpAimColor,
+            ForeColor = Color.White
+        };
+        txtAimColorHex = new TextBox
+        {
+            Location = new Point(205, 20),
+            Size = new Size(80, 22),
+            Parent = grpAimColor,
+            Text = "#ff00d0"
+        };
+        txtAimColorHex.TextChanged += TxtAimColorHex_TextChanged;
+
+        pnlColorPreview = new Panel
+        {
+            Location = new Point(290, 20),
+            Size = new Size(22, 22),
+            Parent = grpAimColor,
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Color.Magenta
+        };
+
+        // Modo de ativação
+        Label lblMode = new Label
+        {
+            Text = "Modo:",
+            Location = new Point(330, 23),
+            Size = new Size(40, 18),
+            Parent = grpAimColor,
+            ForeColor = Color.White
+        };
+        cboAimColorMode = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Location = new Point(375, 20),
+            Size = new Size(100, 24),
+            Parent = grpAimColor
+        };
+        cboAimColorMode.Items.AddRange(new object[] { "fire", "ads", "always" });
+        cboAimColorMode.SelectedIndexChanged += CboAimColorMode_SelectedIndexChanged;
+
+        // FOV
+        lblAimFov = new Label
+        {
+            Text = "FOV: 120px",
+            Location = new Point(15, 55),
+            Size = new Size(90, 18),
+            Parent = grpAimColor,
+            ForeColor = Color.White
+        };
+        trkAimColorFov = new TrackBar
+        {
+            Location = new Point(110, 50),
+            Size = new Size(180, 30),
+            Minimum = 20, Maximum = 400, Value = 120, TickFrequency = 40,
+            Parent = grpAimColor
+        };
+        trkAimColorFov.ValueChanged += TrkAimColorFov_ValueChanged;
+
+        // Tolerância
+        lblAimTol = new Label
+        {
+            Text = "Tolerância: 60",
+            Location = new Point(310, 55),
+            Size = new Size(100, 18),
+            Parent = grpAimColor,
+            ForeColor = Color.White
+        };
+        trkAimColorTolerance = new TrackBar
+        {
+            Location = new Point(415, 50),
+            Size = new Size(180, 30),
+            Minimum = 1, Maximum = 255, Value = 60, TickFrequency = 25,
+            Parent = grpAimColor
+        };
+        trkAimColorTolerance.ValueChanged += TrkAimColorTolerance_ValueChanged;
+
+        // Força
+        lblAimStr = new Label
+        {
+            Text = "Força: 35%",
+            Location = new Point(15, 95),
+            Size = new Size(90, 18),
+            Parent = grpAimColor,
+            ForeColor = Color.White
+        };
+        trkAimColorStrength = new TrackBar
+        {
+            Location = new Point(110, 90),
+            Size = new Size(180, 30),
+            Minimum = 0, Maximum = 100, Value = 35, TickFrequency = 10,
+            Parent = grpAimColor
+        };
+        trkAimColorStrength.ValueChanged += TrkAimColorStrength_ValueChanged;
+
+        // Captura Hz
+        lblAimHz = new Label
+        {
+            Text = "Captura: 90Hz",
+            Location = new Point(310, 95),
+            Size = new Size(100, 18),
+            Parent = grpAimColor,
+            ForeColor = Color.White
+        };
+        trkAimColorCaptureHz = new TrackBar
+        {
+            Location = new Point(415, 90),
+            Size = new Size(180, 30),
+            Minimum = 15, Maximum = 240, Value = 90, TickFrequency = 30,
+            Parent = grpAimColor
+        };
+        trkAimColorCaptureHz.ValueChanged += TrkAimColorCaptureHz_ValueChanged;
+
+        // ── Grupo Recoil ────────────────────────────────────────────
+        GroupBox grpRecoil = new GroupBox
+        {
+            Text = "🔫 Compensação de Recoil",
+            Location = new Point(20, 770),
+            Size = new Size(610, 70),
+            ForeColor = Color.OrangeRed
+        };
+
+        chkRecoilEnabled = new CheckBox
+        {
+            Text = "Ativar Anti-Recoil",
+            Location = new Point(15, 28),
+            Size = new Size(140, 20),
+            Parent = grpRecoil,
+            ForeColor = Color.White
+        };
+        chkRecoilEnabled.CheckedChanged += ChkRecoilEnabled_CheckedChanged;
+
+        lblRecoilStr = new Label
+        {
+            Text = "Força Recoil: 5",
+            Location = new Point(180, 30),
+            Size = new Size(110, 18),
+            Parent = grpRecoil,
+            ForeColor = Color.White
+        };
+        trkRecoilStrength = new TrackBar
+        {
+            Location = new Point(300, 25),
+            Size = new Size(280, 30),
+            Minimum = 0, Maximum = 20, Value = 5, TickFrequency = 2,
+            Parent = grpRecoil
+        };
+        trkRecoilStrength.ValueChanged += TrkRecoilStrength_ValueChanged;
+
+        // ── Botões de ação ──────────────────────────────────────────
         btnSave = new Button
         {
             Text = "Salvar",
-            Location = new Point(450, 590),
+            Location = new Point(450, 855),
             Size = new Size(80, 30),
             DialogResult = DialogResult.OK
         };
@@ -593,7 +882,7 @@ public partial class ConfigForm : MaterialForm
         btnCancel = new Button
         {
             Text = "Cancelar",
-            Location = new Point(550, 590),
+            Location = new Point(550, 855),
             Size = new Size(80, 30),
             DialogResult = DialogResult.Cancel
         };
@@ -606,13 +895,15 @@ public partial class ConfigForm : MaterialForm
         Controls.Add(trkSensitivity);
         Controls.Add(lblDeadZone);
         Controls.Add(trkDeadZone);
-        Controls.Add(lblMouseSensitivity); // Novo
-        Controls.Add(trkMouseSensitivity); // Novo
+        Controls.Add(lblMouseSensitivity);
+        Controls.Add(trkMouseSensitivity);
         Controls.Add(grpDPad);
         Controls.Add(grpLeftStick);
         Controls.Add(grpFace);
         Controls.Add(grpShoulder);
         Controls.Add(grpSpecial);
+        Controls.Add(grpAimColor);
+        Controls.Add(grpRecoil);
         Controls.Add(btnSave);
         Controls.Add(btnCancel);
 

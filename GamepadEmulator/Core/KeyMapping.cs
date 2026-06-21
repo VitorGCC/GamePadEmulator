@@ -4,13 +4,13 @@ namespace GamepadEmulator;
 
 public class KeyMapping
 {
-    // Teclas de D-pad (separadas do analógico)
+    // D-pad
     public Keys DPadUpKey { get; set; } = Keys.Up;
     public Keys DPadDownKey { get; set; } = Keys.Down;
     public Keys DPadLeftKey { get; set; } = Keys.Left;
     public Keys DPadRightKey { get; set; } = Keys.Right;
 
-    // Teclas para o analógico esquerdo
+    // Analógico esquerdo
     public Keys LeftStickUpKey { get; set; } = Keys.W;
     public Keys LeftStickDownKey { get; set; } = Keys.S;
     public Keys LeftStickLeftKey { get; set; } = Keys.A;
@@ -22,34 +22,56 @@ public class KeyMapping
     public Keys ButtonX { get; set; } = Keys.E;
     public Keys ButtonY { get; set; } = Keys.Q;
 
-    // Botões de ombro
+    // Botões de ombro e gatilhos
     public Keys ButtonLB { get; set; } = Keys.R;
     public Keys ButtonRB { get; set; } = Keys.F;
-    public Keys ButtonLT { get; set; } = Keys.RButton; // Botão direito do mouse
-    public Keys ButtonRT { get; set; } = Keys.LButton; // Botão esquerdo do mouse
+    public Keys ButtonLT { get; set; } = Keys.RButton;
+    public Keys ButtonRT { get; set; } = Keys.LButton;
 
     // Botões especiais
     public Keys ButtonStart { get; set; } = Keys.Enter;
     public Keys ButtonBack { get; set; } = Keys.Tab;
 
-    // Configurações de sensibilidade
-    public float Sensitivity { get; set; } = 1.0f;      // Sensibilidade dos analógicos
-    public float MouseSensitivity { get; set; } = 3.0f; // Sensibilidade do mouse
-    public float DeadZone { get; set; } = 0.0f;         // Zona morta definida como 0 por padrão
+    // Sensibilidade legada (usada pela ConfigForm enquanto UI não for atualizada)
+    public float Sensitivity { get; set; } = 1.0f;
+    public float MouseSensitivity { get; set; } = 3.0f;
+    public float DeadZone { get; set; } = 0.0f;
+    public int PollingRate { get; set; } = 1000;
+
+    // Parâmetros completos do engine de tradução do mouse
+    public float SensitivityX { get; set; } = 3.0f;
+    public float SensitivityY { get; set; } = 3.0f;
+    public float PowerCurve { get; set; } = 0.65f;
+    public int AntiDeadzone { get; set; } = 6500;
+    public float SmoothingFactor { get; set; } = 0.5f;
+    public float YAxisRatio { get; set; } = 1.0f;
+
+    // Macro de recoil
+    public bool RecoilEnabled { get; set; } = false;
+    public int RecoilStrength { get; set; } = 5;
+
+    // AimColor — assistência de mira por detecção de cor na tela
+    public bool AimColorEnabled { get; set; } = false;
+    public int AimColorFov { get; set; } = 120;            // lado da região de captura, em pixels
+    public string AimColorHex { get; set; } = "#ff00d0";   // cor-alvo (contorno do inimigo)
+    public int AimColorTolerance { get; set; } = 60;       // tolerância de cor (distância por canal)
+    public int AimColorStrength { get; set; } = 35;        // força do pull (0-100)
+    public int AimColorCaptureHz { get; set; } = 90;       // taxa de captura da tela
+    public string AimColorActivationMode { get; set; } = "fire"; // "always" | "ads" | "fire"
+
+    // Processos de jogo adicionais (complementa a lista padrão)
+    public List<string> CustomGameProcesses { get; set; } = new List<string>();
 
     // Nome do perfil
     public string ProfileName { get; set; } = "Default";
 
-    // Salvar perfil
     public bool SaveProfile(string fileName)
     {
         try
         {
             var dirName = Path.GetDirectoryName(fileName);
             if (!string.IsNullOrEmpty(dirName) && !Directory.Exists(dirName))
-            {
                 Directory.CreateDirectory(dirName);
-            }
 
             XmlSerializer serializer = new XmlSerializer(typeof(KeyMapping));
             using FileStream stream = new FileStream(fileName, FileMode.Create);
@@ -64,7 +86,6 @@ public class KeyMapping
         }
     }
 
-    // Carregar perfil
     public static KeyMapping LoadProfile(string fileName)
     {
         try
@@ -73,12 +94,29 @@ public class KeyMapping
                 return new KeyMapping();
 
             XmlSerializer serializer = new XmlSerializer(typeof(KeyMapping));
-            using FileStream stream = new FileStream(fileName, FileMode.Open);
-            if (serializer.Deserialize(stream) is KeyMapping mapping)
+            KeyMapping mapping;
+            using (FileStream stream = new FileStream(fileName, FileMode.Open))
             {
-                return mapping;
+                mapping = serializer.Deserialize(stream) as KeyMapping ?? new KeyMapping();
             }
-            return new KeyMapping();
+
+            // Migração de perfis legados: versões antigas salvavam apenas MouseSensitivity.
+            // Se o XML não tem SensitivityX, herdamos o valor legado para não resetar a mira.
+            string raw = File.ReadAllText(fileName);
+            if (!raw.Contains("<SensitivityX>"))
+            {
+                mapping.SensitivityX = mapping.MouseSensitivity;
+                mapping.SensitivityY = mapping.MouseSensitivity;
+            }
+
+            // Hardening: mantém valores numéricos em intervalos sãos
+            mapping.RecoilStrength = Math.Clamp(mapping.RecoilStrength, 0, 20);
+            mapping.AimColorStrength = Math.Clamp(mapping.AimColorStrength, 0, 100);
+            mapping.AimColorTolerance = Math.Clamp(mapping.AimColorTolerance, 1, 255);
+            mapping.AimColorFov = Math.Clamp(mapping.AimColorFov, 20, 600);
+            mapping.AimColorCaptureHz = Math.Clamp(mapping.AimColorCaptureHz, 15, 240);
+
+            return mapping;
         }
         catch (Exception ex)
         {

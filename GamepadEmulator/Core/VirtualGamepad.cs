@@ -36,8 +36,6 @@ namespace GamepadEmulator
         private Keyboard? keyboard;
         private bool directInputActive = false;
 
-        private VirtualHidDevice virtualHid;
-
         // Configuração de mapeamento
         public KeyMapping KeyMap { get; set; }
 
@@ -52,32 +50,23 @@ namespace GamepadEmulator
             }
         }
 
-        // Configurações de sensibilidade ajustáveis
-        public class SensitivitySettings
-        {
-            public float GlobalMultiplier { get; set; } = 75.0f;
-            public float MicroMovementAmplification { get; set; } = 0.04f;
-            public float SmoothingFactor { get; set; } = 0.05f;
-            public float VelocityAmplifier { get; set; } = 4.5f;
-            public float CircularMotionBoost { get; set; } = 40.0f;
-            public float CircularSmoothingFactor { get; set; } = 0.01f;
-            public float DiagonalMultiplier { get; set; } = 75.0f;
-            public float DiagonalSmoothingFactor { get; set; } = 0.05f;
-            public float MicroDiagonalAmplification { get; set; } = 0.2f;
-            public float DiagonalPerfectionFactor { get; set; } = 0.4f;
-        }
-
-        private SensitivitySettings sensitivity = new SensitivitySettings();
-
         // Engine de Tradução Avançada
         private MouseTranslationEngine mouseEngine = new MouseTranslationEngine();
 
-        // Taxa de polling (1000 Hz = 1ms, suficiente para jogos)
-        private const int TARGET_POLL_RATE = 1000;
+        // Engine de assistência de mira por cor
+        private GamepadEmulator.Core.AimColorEngine aimColorEngine = new GamepadEmulator.Core.AimColorEngine();
+
+        // Timing de polling
         private long lastPollTime = 0;
         private long performanceFrequency = 0;
 
-        // Lista de processos de jogos
+        // Detecção de janela de jogo (throttled — não checar a 1000 Hz, mas rápido o
+        // suficiente para que o bloqueio de teclas e o esconder-cursor sejam imperceptíveis)
+        private long lastGameCheckTime = 0;
+        private bool cachedGameActive = false;
+        private const long GAME_CHECK_INTERVAL_MS = 16;
+
+        // Lista de processos de jogos (padrão; o usuário pode adicionar via KeyMap.CustomGameProcesses)
         private readonly HashSet<string> gameProcesses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "modernwarfare", "warzone", "cod", "callofduty",
@@ -134,13 +123,6 @@ namespace GamepadEmulator
 
             // Inicializar DirectInput para teclado e mouse
             InitializeDirectInput();
-
-            // Inicializar dispositivo HID virtual
-            virtualHid = new VirtualHidDevice();
-            if (!virtualHid.Initialize())
-            {
-                Debug.WriteLine("Aviso: Não foi possível inicializar o dispositivo HID virtual.");
-            }
         }
 
         private void InitializeDirectInput()
@@ -229,7 +211,9 @@ namespace GamepadEmulator
                 Process process = Process.GetProcessById((int)processId);
                 string processName = process.ProcessName.ToLower();
 
-                bool isGameActive = gameProcesses.Any(game => processName.Contains(game));
+                bool isGameActive = gameProcesses.Any(game => processName.Contains(game))
+                    || (KeyMap.CustomGameProcesses?.Any(game =>
+                            !string.IsNullOrWhiteSpace(game) && processName.Contains(game.ToLower())) ?? false);
 
                 if (isGameActive && !directInputActive)
                 {
@@ -290,6 +274,10 @@ namespace GamepadEmulator
                 isActive = true;
                 OnStateChanged(isActive);
 
+                // Iniciar engine de assistência de mira por cor
+                aimColorEngine.UpdateConfig(KeyMap);
+                aimColorEngine.Start();
+
                 // Iniciar thread para processar inputs com prioridade máxima
                 isRunning = true;
                 inputThread = new Thread(ProcessInputs)
@@ -317,6 +305,9 @@ namespace GamepadEmulator
         public void Stop()
         {
             isRunning = false;
+
+            // Parar engine de assistência de mira
+            aimColorEngine.Stop();
 
             if (inputThread != null && inputThread.IsAlive)
             {
@@ -350,6 +341,12 @@ namespace GamepadEmulator
                 // Mostrar cursor
                 while (ShowCursor(true) < 0) ;
             }
+            else
+            {
+                // Força reavaliação imediata da janela de jogo no próximo ciclo
+                // (reativa bloqueio de teclas e esconde o cursor sem atraso)
+                lastGameCheckTime = 0;
+            }
         }
 
         protected virtual void OnStateChanged(bool isActive)
@@ -373,7 +370,7 @@ namespace GamepadEmulator
                 double elapsedTime = (double)(currentPollTime - lastPollTime) / performanceFrequency;
 
                 // Limitar taxa de atualização
-                double targetFrameTime = 1.0 / TARGET_POLL_RATE;
+                double targetFrameTime = 1.0 / Math.Max(10, KeyMap.PollingRate);
                 if (elapsedTime < targetFrameTime)
                 {
                     Thread.Sleep(1);
@@ -382,8 +379,16 @@ namespace GamepadEmulator
 
                 lastPollTime = currentPollTime;
 
-                // Verificar se estamos em um jogo (apenas 1x por ciclo)
-                bool gameActive = IsGameWindowActive();
+                // Verificar se estamos em um jogo (throttled — chamadas de sistema caras)
+                long nowMs = Environment.TickCount64;
+                if (nowMs - lastGameCheckTime >= GAME_CHECK_INTERVAL_MS)
+                {
+                    cachedGameActive = IsGameWindowActive();
+                    // Sincroniza a config da assistência de mira (perfil pode ter mudado)
+                    aimColorEngine.UpdateConfig(KeyMap);
+                    lastGameCheckTime = nowMs;
+                }
+                bool gameActive = cachedGameActive;
 
                 if (!isActive)
                 {
@@ -423,7 +428,8 @@ namespace GamepadEmulator
                 }
 
                 // Submeter atualizações do controle virtual
-                controller.SubmitReport();
+                // (guarda contra Stop()/Dispose() anular o controller mid-ciclo)
+                controller?.SubmitReport();
             }
         }
 
@@ -600,14 +606,82 @@ namespace GamepadEmulator
                 case Keys.Enter: return Key.Return;
                 case Keys.Escape: return Key.Escape;
                 case Keys.Tab: return Key.Tab;
-                case Keys.ShiftKey: return Key.LeftShift;
-                case Keys.ControlKey: return Key.LeftControl;
-                case Keys.Alt: return Key.LeftAlt;
+                case Keys.Back: return Key.Back;
+                case Keys.CapsLock: return Key.Capital;
+
+                // Modificadores (esquerda e direita)
+                case Keys.ShiftKey:
+                case Keys.LShiftKey: return Key.LeftShift;
+                case Keys.RShiftKey: return Key.RightShift;
+                case Keys.ControlKey:
+                case Keys.LControlKey: return Key.LeftControl;
+                case Keys.RControlKey: return Key.RightControl;
+                case Keys.Alt:
+                case Keys.Menu:
+                case Keys.LMenu: return Key.LeftAlt;
+                case Keys.RMenu: return Key.RightAlt;
+                case Keys.LWin: return Key.LeftWindowsKey;
+                case Keys.RWin: return Key.RightWindowsKey;
+
+                // Setas
                 case Keys.Up: return Key.Up;
                 case Keys.Down: return Key.Down;
                 case Keys.Left: return Key.Left;
                 case Keys.Right: return Key.Right;
-                // Adicione mais mapeamentos conforme necessário
+
+                // Navegação
+                case Keys.Insert: return Key.Insert;
+                case Keys.Delete: return Key.Delete;
+                case Keys.Home: return Key.Home;
+                case Keys.End: return Key.End;
+                case Keys.PageUp: return Key.PageUp;
+                case Keys.PageDown: return Key.PageDown;
+
+                // Teclas de função
+                case Keys.F1: return Key.F1;
+                case Keys.F2: return Key.F2;
+                case Keys.F3: return Key.F3;
+                case Keys.F4: return Key.F4;
+                case Keys.F5: return Key.F5;
+                case Keys.F6: return Key.F6;
+                case Keys.F7: return Key.F7;
+                case Keys.F8: return Key.F8;
+                case Keys.F9: return Key.F9;
+                case Keys.F10: return Key.F10;
+                case Keys.F11: return Key.F11;
+                case Keys.F12: return Key.F12;
+
+                // Teclado numérico
+                case Keys.NumPad0: return Key.NumberPad0;
+                case Keys.NumPad1: return Key.NumberPad1;
+                case Keys.NumPad2: return Key.NumberPad2;
+                case Keys.NumPad3: return Key.NumberPad3;
+                case Keys.NumPad4: return Key.NumberPad4;
+                case Keys.NumPad5: return Key.NumberPad5;
+                case Keys.NumPad6: return Key.NumberPad6;
+                case Keys.NumPad7: return Key.NumberPad7;
+                case Keys.NumPad8: return Key.NumberPad8;
+                case Keys.NumPad9: return Key.NumberPad9;
+                case Keys.Add: return Key.Add;
+                case Keys.Subtract: return Key.Subtract;
+                case Keys.Multiply: return Key.Multiply;
+                case Keys.Divide: return Key.Divide;
+                case Keys.Decimal: return Key.Decimal;
+
+                // Teclas OEM / pontuação
+                case Keys.Oemtilde: return Key.Grave;
+                case Keys.OemMinus: return Key.Minus;
+                case Keys.Oemplus: return Key.Equals;
+                case Keys.OemOpenBrackets: return Key.LeftBracket;
+                case Keys.OemCloseBrackets: return Key.RightBracket;
+                case Keys.OemSemicolon: return Key.Semicolon;
+                case Keys.OemQuotes: return Key.Apostrophe;
+                case Keys.Oemcomma: return Key.Comma;
+                case Keys.OemPeriod: return Key.Period;
+                case Keys.OemQuestion: return Key.Slash;
+                case Keys.OemBackslash:
+                case Keys.OemPipe: return Key.Backslash;
+
                 default: return Key.Unknown;
             }
         }
@@ -632,15 +706,71 @@ namespace GamepadEmulator
         private void ProcessMouseMovement(int deltaX, int deltaY)
         {
             if (controller == null) return;
-            
-            mouseEngine.Sensitivity = KeyMap.MouseSensitivity;
 
-            // Passa os deltas da USB crua para a Engine de Tradução
+            // Sincronizar todos os parâmetros do perfil com a engine
+            mouseEngine.SensitivityX = KeyMap.SensitivityX;
+            mouseEngine.SensitivityY = KeyMap.SensitivityY;
+            mouseEngine.YAxisRatio = KeyMap.YAxisRatio;
+            mouseEngine.PowerCurve = KeyMap.PowerCurve;
+            mouseEngine.AntiDeadzone = KeyMap.AntiDeadzone;
+            mouseEngine.SmoothingFactor = KeyMap.SmoothingFactor;
+
+            // Passa os deltas do mouse cru para a Engine de Tradução
             var (stickX, stickY) = mouseEngine.Translate(deltaX, deltaY);
 
+            int outX = stickX;
+            int outY = stickY;
+
+            // Assistência de mira por cor: soma o pull calculado pela engine de tela.
+            if (KeyMap.AimColorEnabled && IsAimColorActive())
+            {
+                var (ax, ay) = aimColorEngine.GetPull();
+                outX = Math.Clamp(outX + ax, short.MinValue, short.MaxValue);
+                outY = Math.Clamp(outY + ay, short.MinValue, short.MaxValue);
+            }
+
+            // Compensação de recoil: enquanto o gatilho de tiro está pressionado,
+            // aplica um viés CONSTANTE para baixo (Y negativo) para neutralizar o coice.
+            // O pull é pequeno e fixo — não acumula com o movimento manual do jogador.
+            if (KeyMap.RecoilEnabled && IsFireHeld())
+            {
+                int recoilPull = KeyMap.RecoilStrength * 500;
+                outY = Math.Clamp(outY - recoilPull, short.MinValue, short.MaxValue);
+            }
+
             // Envia para o controle virtual
-            controller.SetAxisValue(Xbox360Axis.RightThumbX, stickX);
-            controller.SetAxisValue(Xbox360Axis.RightThumbY, stickY);
+            controller.SetAxisValue(Xbox360Axis.RightThumbX, (short)outX);
+            controller.SetAxisValue(Xbox360Axis.RightThumbY, (short)outY);
+        }
+
+        /// <summary>
+        /// Verifica se o gatilho de tiro (RT) está pressionado.
+        /// </summary>
+        private bool IsFireHeld()
+        {
+            return (GetAsyncKeyState(KeyMap.ButtonRT) & 0x8000) != 0;
+        }
+
+        /// <summary>
+        /// Verifica se o gatilho de mira/ADS (LT) está pressionado.
+        /// </summary>
+        private bool IsAdsHeld()
+        {
+            return (GetAsyncKeyState(KeyMap.ButtonLT) & 0x8000) != 0;
+        }
+
+        /// <summary>
+        /// Determina se a assistência de mira deve estar ativa, conforme o modo configurado.
+        /// </summary>
+        private bool IsAimColorActive()
+        {
+            switch ((KeyMap.AimColorActivationMode ?? "fire").ToLowerInvariant())
+            {
+                case "always": return true;
+                case "ads": return IsAdsHeld();
+                case "fire":
+                default: return IsFireHeld();
+            }
         }
 
         private void ResetControllerButtons()
@@ -746,36 +876,13 @@ namespace GamepadEmulator
             controller.SetSliderValue(Xbox360Slider.LeftTrigger, leftTrigger);
         }
 
-        private bool AnyKeyPressed()
-        {
-            return (GetAsyncKeyState(KeyMap.DPadUpKey) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.DPadDownKey) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.DPadLeftKey) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.DPadRightKey) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.LeftStickUpKey) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.LeftStickDownKey) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.LeftStickLeftKey) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.LeftStickRightKey) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.ButtonA) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.ButtonB) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.ButtonX) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.ButtonY) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.ButtonLB) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.ButtonRB) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.ButtonStart) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.ButtonBack) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.ButtonLT) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(KeyMap.ButtonRT) & 0x8000) != 0;
-        }
-
         public void Dispose()
         {
             Stop();
 
-            virtualHid?.Dispose();
+            aimColorEngine?.Dispose();
 
             // Limpar recursos do DirectInput
-
             keyboard?.Dispose();
             keyboard = null;
 

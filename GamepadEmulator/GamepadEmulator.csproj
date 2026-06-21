@@ -3,23 +3,32 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>EmuShot</AssemblyName>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
-    <PackageIcon>ChatGPT Image 19 de abr. de 2025, 03_22_41.png</PackageIcon>
+    <!-- Para definir o ícone do executável, adicione um arquivo .ico ao projeto e referencie aqui:
+         <ApplicationIcon>Assets\app.ico</ApplicationIcon> -->
+
+    <!-- Configurações de Publicação Comercial / Blindagem -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    
+    <!-- Otimizações e Ofuscação Parcial (AOT) -->
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <PublishTrimmed>false</PublishTrimmed>
+    
+    <!-- Remoção de Símbolos para dificultar Engenharia Reversa -->
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="MaterialSkin.2" Version="2.3.1" />
     <PackageReference Include="SharpDX.RawInput" Version="4.2.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="..\..\..\..\Downloads\ChatGPT Image 19 de abr. de 2025, 03_22_41.png">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
   </ItemGroup>
 
   <ItemGroup>

@@ -14,9 +14,11 @@ public partial class MainForm : MaterialForm
     // Controles da interface
     private MaterialButton btnStart = new();
     private MaterialButton btnConfig = new();
-    private MaterialLabel lblStatus = new();
     private MaterialLabel lblProfile = new();
     private MaterialComboBox cboProfiles = new();
+    private MaterialLabel lblPollingRate = new();
+    private MaterialComboBox cboPollingRate = new();
+    private MaterialLabel lblStatus = new();
     private MaterialCard pnlInfo = new();
     private MaterialLabel lblInfo = new();
     private NotifyIcon trayIcon = new();
@@ -79,10 +81,18 @@ public partial class MainForm : MaterialForm
             }
         }));
     }
-    private void InitializeGamepad()
+        private void InitializeGamepad()
         {
             try
             {
+                // Verificar e Instalar ViGEmBus se necessário
+                bool driverReady = GamepadEmulator.Core.ViGEmInstaller.CheckAndInstallAsync().GetAwaiter().GetResult();
+                if (!driverReady)
+                {
+                    Environment.Exit(1);
+                    return;
+                }
+
                 gamepad = new VirtualGamepad(this.Handle);
 
                 // Adicionar handler para evento de mudança de estado
@@ -104,6 +114,13 @@ public partial class MainForm : MaterialForm
                 {
                     // Criar perfil padrão se não existir
                     gamepad.KeyMap.SaveProfile(currentProfilePath);
+                }
+
+                // Sincronizar PollingRate UI
+                string hzStr = gamepad.KeyMap.PollingRate.ToString();
+                if (cboPollingRate.Items.Contains(hzStr))
+                {
+                    cboPollingRate.SelectedItem = hzStr;
                 }
 
                 // Atualizar status
@@ -266,6 +283,13 @@ public partial class MainForm : MaterialForm
             {
                 gamepad.KeyMap = KeyMapping.LoadProfile(profilePath);
                 currentProfilePath = profilePath;
+                
+                // Atualizar UI do Polling Rate para refletir o perfil carregado
+                string hzStr = gamepad.KeyMap.PollingRate.ToString();
+                if (cboPollingRate.Items.Contains(hzStr))
+                {
+                    cboPollingRate.SelectedItem = hzStr;
+                }
             }
         }
 
@@ -344,9 +368,26 @@ public partial class MainForm : MaterialForm
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Location = new Point(85, 240),
-                Size = new Size(190, 36)
+                Size = new Size(160, 36)
             };
             cboProfiles.SelectedIndexChanged += CboProfiles_SelectedIndexChanged;
+
+            // Seletor de Polling Rate
+            lblPollingRate = new MaterialLabel
+            {
+                Text = "Hz:",
+                Location = new Point(265, 245),
+                Size = new Size(30, 20)
+            };
+
+            cboPollingRate = new MaterialComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new Point(300, 240),
+                Size = new Size(110, 36)
+            };
+            cboPollingRate.Items.AddRange(new object[] { "125", "250", "500", "1000" });
+            cboPollingRate.SelectedIndexChanged += CboPollingRate_SelectedIndexChanged;
 
             // Botão de iniciar/parar
             btnStart = new MaterialButton
@@ -375,7 +416,26 @@ public partial class MainForm : MaterialForm
             Controls.Add(lblHelp);
             Controls.Add(lblProfile);
             Controls.Add(cboProfiles);
+            Controls.Add(lblPollingRate);
+            Controls.Add(cboPollingRate);
             Controls.Add(btnStart);
             Controls.Add(btnConfig);
+        }
+
+        private void CboPollingRate_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (cboPollingRate.SelectedIndex < 0 || gamepad == null)
+                return;
+
+            if (int.TryParse(cboPollingRate.SelectedItem?.ToString(), out int newRate))
+            {
+                gamepad.KeyMap.PollingRate = newRate;
+
+                // Persistir sempre — inclusive no perfil Default, que é o mais usado
+                string profileName = string.IsNullOrWhiteSpace(gamepad.KeyMap.ProfileName)
+                    ? "Default" : gamepad.KeyMap.ProfileName;
+                string profilePath = Path.Combine(AppContext.BaseDirectory, "Profiles", $"{profileName}.profile");
+                gamepad.KeyMap.SaveProfile(profilePath);
+            }
         }
     }
